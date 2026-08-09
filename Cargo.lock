@@ -576,6 +576,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

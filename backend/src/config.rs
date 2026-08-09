@@ -12,6 +12,7 @@ use url::Url;
 const DEFAULT_BIND: &str = "127.0.0.1:8787";
 const DEFAULT_CODEX_URL: &str = "ws://127.0.0.1:8765";
 const DEFAULT_FRONTEND_DIR: &str = "frontend/dist";
+const DEFAULT_SSH_REMOTE_PORT: u16 = 4500;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -22,6 +23,9 @@ pub struct Config {
     pub auto_start_codex: bool,
     pub codex_bin: PathBuf,
     pub codex_start_timeout: Duration,
+    pub ssh_bin: PathBuf,
+    pub ssh_start_timeout: Duration,
+    pub ssh_remote_port: u16,
     pub frontend_dir: PathBuf,
 }
 
@@ -43,6 +47,10 @@ pub enum ConfigError {
     InvalidBoolean(&'static str),
     #[error("invalid POCKET_AGENT_CODEX_START_TIMEOUT_MS: {0}")]
     InvalidStartTimeout(String),
+    #[error("invalid POCKET_AGENT_SSH_START_TIMEOUT_MS: {0}")]
+    InvalidSshStartTimeout(String),
+    #[error("invalid POCKET_AGENT_SSH_REMOTE_PORT: {0}")]
+    InvalidSshRemotePort(String),
 }
 
 impl Config {
@@ -88,6 +96,23 @@ impl Config {
             .ok()
             .filter(|value| *value > 0)
             .ok_or_else(|| ConfigError::InvalidStartTimeout(timeout_raw.clone()))?;
+        let ssh_bin = get("POCKET_AGENT_SSH_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("ssh"));
+        let ssh_timeout_raw =
+            get("POCKET_AGENT_SSH_START_TIMEOUT_MS").unwrap_or_else(|| "20000".to_owned());
+        let ssh_timeout_ms = ssh_timeout_raw
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| ConfigError::InvalidSshStartTimeout(ssh_timeout_raw.clone()))?;
+        let ssh_remote_port_raw = get("POCKET_AGENT_SSH_REMOTE_PORT")
+            .unwrap_or_else(|| DEFAULT_SSH_REMOTE_PORT.to_string());
+        let ssh_remote_port = ssh_remote_port_raw
+            .parse::<u16>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| ConfigError::InvalidSshRemotePort(ssh_remote_port_raw.clone()))?;
         let frontend_dir = get("POCKET_AGENT_FRONTEND_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_FRONTEND_DIR));
@@ -100,6 +125,9 @@ impl Config {
             auto_start_codex,
             codex_bin,
             codex_start_timeout: Duration::from_millis(timeout_ms),
+            ssh_bin,
+            ssh_start_timeout: Duration::from_millis(ssh_timeout_ms),
+            ssh_remote_port,
             frontend_dir,
         })
     }
@@ -154,6 +182,8 @@ mod tests {
         assert_eq!(config.bind_addr, "127.0.0.1:8787".parse().unwrap());
         assert_eq!(config.codex_socket_addr, "127.0.0.1:8765".parse().unwrap());
         assert!(config.auto_start_codex);
+        assert_eq!(config.ssh_remote_port, 4500);
+        assert_eq!(config.ssh_start_timeout, Duration::from_secs(20));
     }
 
     #[test]

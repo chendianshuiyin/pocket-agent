@@ -24,6 +24,9 @@ async fn starts_probes_and_stops_a_real_codex_app_server() {
         auto_start_codex: true,
         codex_bin: PathBuf::from("codex"),
         codex_start_timeout: Duration::from_secs(10),
+        ssh_bin: PathBuf::from("ssh"),
+        ssh_start_timeout: Duration::from_secs(1),
+        ssh_remote_port: 4500,
         frontend_dir: frontend.path().to_owned(),
     });
 

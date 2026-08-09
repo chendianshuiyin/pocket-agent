@@ -54,6 +54,9 @@ async fn start_servers() -> TestServers {
         auto_start_codex: false,
         codex_bin: PathBuf::from("codex"),
         codex_start_timeout: Duration::from_secs(1),
+        ssh_bin: PathBuf::from("ssh"),
+        ssh_start_timeout: Duration::from_secs(1),
+        ssh_remote_port: 4500,
         frontend_dir: frontend.path().to_owned(),
     };
 
@@ -88,6 +91,9 @@ async fn health_and_static_site_are_served() {
         auto_start_codex: false,
         codex_bin: PathBuf::from("codex"),
         codex_start_timeout: Duration::from_secs(1),
+        ssh_bin: PathBuf::from("ssh"),
+        ssh_start_timeout: Duration::from_secs(1),
+        ssh_remote_port: 4500,
         frontend_dir: frontend.path().to_owned(),
     });
 
@@ -110,6 +116,58 @@ async fn health_and_static_site_are_served() {
         index.into_body().collect().await.unwrap().to_bytes(),
         "pocket-agent-ui"
     );
+}
+
+#[tokio::test]
+async fn ssh_control_api_requires_authentication_and_validates_targets() {
+    let frontend = tempfile::tempdir().unwrap();
+    std::fs::write(frontend.path().join("index.html"), "pocket-agent-ui").unwrap();
+    let state = AppState::new(Config {
+        bind_addr: "127.0.0.1:0".parse().unwrap(),
+        token: "test-secret".to_owned(),
+        codex_url: Url::parse("ws://127.0.0.1:9").unwrap(),
+        codex_socket_addr: "127.0.0.1:9".parse().unwrap(),
+        auto_start_codex: false,
+        codex_bin: PathBuf::from("codex"),
+        codex_start_timeout: Duration::from_secs(1),
+        ssh_bin: PathBuf::from("ssh"),
+        ssh_start_timeout: Duration::from_secs(1),
+        ssh_remote_port: 4500,
+        frontend_dir: frontend.path().to_owned(),
+    });
+
+    let unauthorized = router(state.clone())
+        .oneshot(Request::get("/api/ssh/status").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let status = router(state.clone())
+        .oneshot(
+            Request::get("/api/ssh/status")
+                .header("x-pocket-agent-token", "test-secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.status(), StatusCode::OK);
+    assert_eq!(
+        status.into_body().collect().await.unwrap().to_bytes(),
+        r#"{"mode":"local","connected":false}"#
+    );
+
+    let invalid_target = router(state)
+        .oneshot(
+            Request::post("/api/ssh/connect")
+                .header("content-type", "application/json")
+                .header("x-pocket-agent-token", "test-secret")
+                .body(Body::from(r#"{"target":"-oProxyCommand=bad"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_target.status(), StatusCode::BAD_GATEWAY);
 }
 
 #[tokio::test]

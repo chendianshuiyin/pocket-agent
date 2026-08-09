@@ -27,6 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_graceful_shutdown(shutdown_signal(state.clone()))
         .await;
 
+    pocket_agent_gateway::ssh::stop_managed_ssh(&state).await;
     app_server::stop_managed_codex(&state).await;
     if let Err(error) = serve_result {
         error!(%error, "gateway server failed");

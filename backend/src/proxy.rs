@@ -26,7 +26,8 @@ pub async fn websocket_handler(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let upstream = match tokio_tungstenite::connect_async(state.config.codex_url.as_str()).await {
+    let target = state.active_upstream().await;
+    let upstream = match tokio_tungstenite::connect_async(target.url.as_str()).await {
         Ok((stream, _response)) => stream,
         Err(error) => {
             warn!(%error, "failed to connect to Codex app-server");
