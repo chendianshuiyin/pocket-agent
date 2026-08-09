@@ -93,6 +93,8 @@ enum SshError {
     InvalidTarget,
     #[error("remote Codex executable must not be empty")]
     InvalidCodexBin,
+    #[error("{0} must be between 1 and 65535")]
+    InvalidPort(&'static str),
     #[error("failed to reserve a local forwarding port: {0}")]
     ReservePort(#[source] std::io::Error),
     #[error("failed to start SSH: {0}")]
@@ -160,6 +162,7 @@ async fn start_session(
     request: SshConnectRequest,
 ) -> Result<SshStatus, SshError> {
     validate_target(&request.target)?;
+    validate_request_ports(&request)?;
     let remote_codex_bin = request
         .remote_codex_bin
         .as_deref()
@@ -331,6 +334,16 @@ fn validate_target(target: &str) -> Result<(), SshError> {
     Ok(())
 }
 
+fn validate_request_ports(request: &SshConnectRequest) -> Result<(), SshError> {
+    if request.port == Some(0) {
+        return Err(SshError::InvalidPort("SSH port"));
+    }
+    if request.remote_port == Some(0) {
+        return Err(SshError::InvalidPort("remote app-server port"));
+    }
+    Ok(())
+}
+
 async fn current_status(state: &AppState) -> SshStatus {
     let mut session = state.ssh_session.lock().await;
     let exited = match session.as_mut() {
@@ -422,5 +435,22 @@ mod tests {
     #[test]
     fn quotes_remote_shell_values() {
         assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
+    }
+
+    #[test]
+    fn rejects_zero_ports_before_spawning_ssh() {
+        let mut ssh_port = request("prod");
+        ssh_port.port = Some(0);
+        assert!(matches!(
+            validate_request_ports(&ssh_port),
+            Err(SshError::InvalidPort("SSH port"))
+        ));
+
+        let mut remote_port = request("prod");
+        remote_port.remote_port = Some(0);
+        assert!(matches!(
+            validate_request_ports(&remote_port),
+            Err(SshError::InvalidPort("remote app-server port"))
+        ));
     }
 }

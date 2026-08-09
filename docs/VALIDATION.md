@@ -23,7 +23,7 @@ npm --prefix frontend audit --audit-level=high
 
 Results:
 
-- Rust: 15 tests passed; the opt-in real-Codex test is ignored by the default suite.
+- Rust: 16 tests passed; the opt-in real-Codex test is ignored by the default suite.
 - Frontend: 7 test files and 24 tests passed.
 - npm audit: 0 vulnerabilities.
 - Vite built the production application and generated the service worker.
