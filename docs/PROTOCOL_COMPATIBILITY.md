@@ -55,9 +55,9 @@ some rolling documentation examples.
 ## Client methods used by Pocket Agent
 
 - Discovery: `model/list`, `thread/list`, `thread/read`, `app/list`,
-  `mcpServerStatus/list`
+  `mcpServerStatus/list`, `skills/list`
 - Conversation: `thread/start`, `thread/resume`, `turn/start`, `turn/steer`,
-  `turn/interrupt`
+  `turn/interrupt`, `thread/compact/start`, `review/start`
 - Files: `fs/readDirectory`, `fs/writeFile`
 - Terminal: `command/exec`, `command/exec/write`,
   `command/exec/terminate`
@@ -69,6 +69,15 @@ threads created by this client.
 `thread/read` is used to load persisted turns, but it does not subscribe the
 connection. Reconnect recovery therefore always follows it with
 `thread/resume` before continuing the conversation.
+
+The command palette maps `/compact` and `/review` to the stable methods above;
+navigation commands remain client-side. Unknown slash-prefixed text is sent as
+ordinary user input rather than being discarded.
+
+`skills/list` is scoped to the active remote `cwd`. `skills/changed` is treated
+as an invalidation signal and triggers a forced refresh. An explicit Skill turn
+contains both the `$<skill-name>` marker and `{ type: "skill", name, path }`,
+matching the stable 0.144.0 schema.
 
 ## Streamed state
 
@@ -123,6 +132,8 @@ and MCP calls. A Pocket Agent token therefore grants host-control privileges.
 
 - app-server binds only to a loopback `ws://` address.
 - The Rust gateway rejects non-loopback upstreams.
+- SSH mode starts app-server on remote loopback and exposes it only through a
+  gateway-local loopback forward.
 - Remote browser traffic must use TLS (`https://` / `wss://`) at a reverse
   proxy or tunnel.
 - Browser authentication uses a hex-encoded token in
