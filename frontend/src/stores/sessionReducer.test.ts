@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { ThreadItem } from '../protocol/types'
-import { ALL_INTERACTIVE_SOURCE_KINDS, createThreadStartSandboxParams, filterResolvedRequests, mergeLifecycleItem, shouldApplyScopedNotification, terminalSandboxPolicy, terminalSupportsStreaming } from './useCodexSession'
+import { ALL_INTERACTIVE_SOURCE_KINDS, createThreadStartSandboxParams, filterResolvedRequests, hasGatewayToken, mergeLifecycleItem, shouldApplyScopedNotification, terminalSandboxPolicy, terminalSupportsStreaming } from './useCodexSession'
 
 describe('Codex session protocol regressions', () => {
+  it('空 Token 不应启动网关连接', () => {
+    expect(hasGatewayToken('')).toBe(false)
+    expect(hasGatewayToken('secret')).toBe(true)
+  })
+
   it('thread/start 使用 app-server 要求的 kebab-case SandboxMode', () => {
     expect(createThreadStartSandboxParams('workspace-write')).toEqual({ sandbox: 'workspace-write' })
   })

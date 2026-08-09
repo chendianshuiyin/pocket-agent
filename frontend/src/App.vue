@@ -17,6 +17,13 @@ const { state, mutableState } = session
 const feed = ref<HTMLElement>()
 
 const connected = computed(() => state.connection.phase === 'ready')
+const needsConnectionSettings = computed(() => !state.settings.token || state.connection.phase === 'closed')
+const connectionTitle = computed(() => {
+  if (!state.settings.token) return '需要连接凭据'
+  if (state.connection.phase === 'offline') return '设备处于离线状态'
+  if (state.connection.phase === 'closed') return '连接已暂停'
+  return '正在建立安全连接'
+})
 const running = computed(() => !!state.activeTurnId)
 const taskTitle = computed(() => state.activeThread?.name || state.activeThread?.preview || '新任务')
 const navItems = [
@@ -80,8 +87,8 @@ watch(() => state.tab, (tab) => {
 
         <div ref="feed" class="conversation-feed">
           <div v-if="!connected" class="connection-callout">
-            <Unplug :size="20" /><span><b>{{ state.connection.phase === 'offline' ? '设备处于离线状态' : '正在建立安全连接' }}</b><small>{{ state.connection.error || '连接 app-server 后会自动恢复当前任务。' }}</small></span>
-            <button @click="session.reconnect">重试</button>
+            <Unplug :size="20" /><span><b>{{ connectionTitle }}</b><small>{{ state.connection.error || '连接 app-server 后会自动恢复当前任务。' }}</small></span>
+            <button @click="needsConnectionSettings ? mutableState.settingsOpen = true : session.reconnect()">{{ needsConnectionSettings ? '检查设置' : '重试' }}</button>
           </div>
 
           <ApprovalCard
@@ -186,7 +193,6 @@ watch(() => state.tab, (tab) => {
       :models="mutableState.models"
       @close="mutableState.settingsOpen = false"
       @save="session.saveSettings"
-      @reconnect="session.reconnect"
     />
   </div>
 </template>

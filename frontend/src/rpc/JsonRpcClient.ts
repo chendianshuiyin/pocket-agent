@@ -28,6 +28,7 @@ export interface JsonRpcClientOptions {
   requestTimeoutMs?: number
   reconnectBaseMs?: number
   reconnectMaxMs?: number
+  reconnectMaxAttempts?: number
   random?: () => number
   socketFactory?: (url: string, protocols?: string[]) => WebSocket
 }
@@ -245,7 +246,7 @@ export class JsonRpcClient {
         if (this.socket === socket) this.handleMessage(event.data)
       })
       socket.addEventListener('error', () => {
-        if (this.socket === socket) this.setState({ error: 'WebSocket 连接失败' })
+        if (this.socket === socket) this.setState({ error: 'WebSocket 连接失败，请检查 Token 与服务地址' })
       })
       socket.addEventListener('close', (event) => {
         // A superseded socket may deliver close after a replacement is ready.
@@ -257,7 +258,7 @@ export class JsonRpcClient {
         this.socket = null
         this.rejectPending(new Error(`连接中断 (${event.code})`))
         rejectIfUnsettled(new Error(event.reason || `WebSocket 已关闭 (${event.code})`))
-        if (!this.manuallyClosed) this.scheduleReconnect(event.reason || `连接中断 (${event.code})`)
+        if (!this.manuallyClosed) this.scheduleReconnect(event.reason || this.snapshot.error || `连接中断 (${event.code})`)
       })
     })
   }
@@ -339,6 +340,16 @@ export class JsonRpcClient {
   private scheduleReconnect(reason: string): void {
     this.clearReconnectTimer()
     const attempt = this.snapshot.attempt + 1
+    const maxAttempts = this.config.reconnectMaxAttempts ?? 6
+    if (attempt > maxAttempts) {
+      this.setState({
+        phase: 'closed',
+        attempt: maxAttempts,
+        nextRetryMs: null,
+        error: `重连已暂停：${reason}`,
+      })
+      return
+    }
     const base = this.config.reconnectBaseMs ?? 700
     const cap = this.config.reconnectMaxMs ?? 20_000
     const exponential = base * 2 ** Math.min(attempt - 1, 7)

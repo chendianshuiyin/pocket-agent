@@ -12,7 +12,7 @@ const label = computed(() => {
     case 'reconnecting': return `重连 ${props.connection.attempt}`
     case 'initializing': return '同步中'
     case 'connecting': return '连接中'
-    case 'closed': return '已断开'
+    case 'closed': return props.connection.error?.includes('填写访问 Token') ? '需配置' : '已暂停'
     default: return '待连接'
   }
 })

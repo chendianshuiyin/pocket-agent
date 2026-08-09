@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, watch } from 'vue'
-import { Eye, EyeOff, RotateCw, X } from '@lucide/vue'
+import { Eye, EyeOff, X } from '@lucide/vue'
 import type { Model } from '../protocol/types'
 import type { SettingsState } from '../stores/useCodexSession'
 
@@ -12,7 +12,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   save: [settings: SettingsState]
-  reconnect: []
 }>()
 
 const form = reactive<SettingsState>({ ...props.settings })
@@ -47,7 +46,7 @@ watch(() => props.open, (open) => {
             <label>
               <span>访问 Token</span>
               <span class="input-action">
-                <input v-model="form.token" :type="ui.showToken ? 'text' : 'password'" autocomplete="current-password" placeholder="Gateway token" />
+                <input v-model="form.token" :type="ui.showToken ? 'text' : 'password'" autocomplete="current-password" placeholder="Gateway token" required />
                 <button type="button" class="inside-button" :aria-label="ui.showToken ? '隐藏 Token' : '显示 Token'" @click="ui.showToken = !ui.showToken">
                   <EyeOff v-if="ui.showToken" :size="18" /><Eye v-else :size="18" />
                 </button>
@@ -101,7 +100,6 @@ watch(() => props.open, (open) => {
             </div>
 
             <div class="sheet-actions">
-              <button type="button" class="button secondary" @click="emit('reconnect')"><RotateCw :size="17" />立即重连</button>
               <button type="submit" class="button primary">保存并连接</button>
             </div>
           </form>

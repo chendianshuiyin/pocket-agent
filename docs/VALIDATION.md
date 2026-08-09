@@ -24,7 +24,7 @@ npm --prefix frontend audit --audit-level=high
 Results:
 
 - Rust: 11 tests passed; the opt-in real-Codex test is ignored by the default suite.
-- Frontend: 4 test files and 15 tests passed.
+- Frontend: 4 test files and 17 tests passed.
 - npm audit: 0 vulnerabilities.
 - Vite built the production application and generated the service worker.
 - The generated manifest contains 192 px and 512 px PNG icons, a maskable icon, an explicit app id, start URL, scope, and standalone display mode.
@@ -54,6 +54,8 @@ The production build was served by the Rust gateway and tested at a 412 x 915 An
 Verified paths:
 
 - missing token shows a recoverable disconnected state
+- missing credentials pause reconnect immediately and open Settings instead of
+  entering an unbounded retry loop
 - saving the token connects and completes initialization
 - the browser authenticates with `Sec-WebSocket-Protocol` and keeps the token
   out of the WebSocket URL

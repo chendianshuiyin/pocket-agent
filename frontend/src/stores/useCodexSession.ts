@@ -158,6 +158,7 @@ const state = reactive<SessionState>({
 let client: JsonRpcClient | null = null
 let initialized = false
 let openThreadGeneration = 0
+const TOKEN_REQUIRED_MESSAGE = '请先在连接设置中填写访问 Token'
 
 export const ALL_INTERACTIVE_SOURCE_KINDS = [
   'cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview', 'subAgentCompact',
@@ -187,6 +188,10 @@ function ensureClient(): JsonRpcClient {
 }
 
 async function connect(): Promise<void> {
+  if (!hasGatewayToken(state.settings.token)) {
+    stopForMissingToken()
+    return
+  }
   state.lastError = null
   try {
     await ensureClient().connect()
@@ -196,6 +201,10 @@ async function connect(): Promise<void> {
 }
 
 async function reconnect(): Promise<void> {
+  if (!hasGatewayToken(state.settings.token)) {
+    stopForMissingToken()
+    return
+  }
   const rpc = ensureClient()
   rpc.updateConfig({ url: state.settings.endpoint, token: state.settings.token })
   try {
@@ -207,6 +216,19 @@ async function reconnect(): Promise<void> {
 
 function disconnect(): void {
   client?.disconnect()
+}
+
+function stopForMissingToken(): void {
+  client?.disconnect()
+  state.connection = {
+    phase: 'closed',
+    attempt: 0,
+    nextRetryMs: null,
+    error: TOKEN_REQUIRED_MESSAGE,
+    server: null,
+  }
+  state.lastError = TOKEN_REQUIRED_MESSAGE
+  state.settingsOpen = true
 }
 
 function saveSettings(next: SettingsState): void {
@@ -223,6 +245,10 @@ function saveSettings(next: SettingsState): void {
   } else {
     localStorage.removeItem('pocket.token')
     sessionStorage.setItem('pocket.token', next.token)
+  }
+  if (!hasGatewayToken(next.token)) {
+    stopForMissingToken()
+    return
   }
   state.settingsOpen = false
   void reconnect()
@@ -835,6 +861,10 @@ export function __resetSessionForTests(): void {
 
 export function createThreadStartSandboxParams(sandbox: SettingsState['sandbox']): { sandbox: SettingsState['sandbox'] } {
   return { sandbox }
+}
+
+export function hasGatewayToken(token: string): boolean {
+  return token.length > 0
 }
 
 export function mergeLifecycleItem(items: ThreadItem[], completed: ThreadItem): void {

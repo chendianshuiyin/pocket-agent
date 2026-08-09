@@ -155,6 +155,27 @@ describe('JsonRpcClient', () => {
     client.destroy()
   })
 
+  it('连续失败达到上限后暂停重连，等待用户检查设置', async () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const client = new JsonRpcClient({
+      url: 'ws://localhost/ws', reconnectBaseMs: 100, reconnectMaxAttempts: 2, random: () => 0,
+      socketFactory: (url) => { const socket = new FakeSocket(url); sockets.push(socket); return socket as unknown as WebSocket },
+    })
+    await ready(client, sockets)
+    sockets[0]!.close(1006, 'network')
+    await vi.advanceTimersByTimeAsync(75)
+    sockets[1]!.close(1006, 'network')
+    await vi.advanceTimersByTimeAsync(150)
+    sockets[2]!.close(1006, 'network')
+
+    expect(client.state).toMatchObject({ phase: 'closed', attempt: 2, nextRetryMs: null })
+    expect(client.state.error).toContain('重连已暂停')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(sockets).toHaveLength(3)
+    client.destroy()
+  })
+
   it('允许 command/exec 显式关闭客户端请求超时', async () => {
     vi.useFakeTimers()
     const sockets: FakeSocket[] = []
