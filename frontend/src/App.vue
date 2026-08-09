@@ -26,6 +26,9 @@ const connectionTitle = computed(() => {
 })
 const running = computed(() => !!state.activeTurnId)
 const taskTitle = computed(() => state.activeThread?.name || state.activeThread?.preview || '新任务')
+const remoteLabel = computed(() => state.settings.connectionMode === 'ssh'
+  ? state.ssh.connected ? `SSH · ${state.ssh.target}` : `SSH · ${state.settings.sshTarget || '未连接'}`
+  : 'LOCAL')
 const navItems = [
   { id: 'chat', label: '对话', icon: MessageCircle },
   { id: 'threads', label: '任务', icon: FolderKanban },
@@ -57,6 +60,7 @@ watch(() => state.tab, (tab) => {
         <span class="brand-copy"><b>Pocket</b><small>AGENT</small></span>
       </button>
       <div class="topbar-actions">
+        <span class="host-badge" :class="{ remote: state.settings.connectionMode === 'ssh' }">{{ remoteLabel }}</span>
         <ConnectionBadge :connection="state.connection" />
         <button class="icon-button" aria-label="连接设置" @click="mutableState.settingsOpen = true"><Settings2 :size="19" /></button>
       </div>
@@ -73,6 +77,7 @@ watch(() => state.tab, (tab) => {
         <span>CURRENT WORKSPACE</span>
         <b>{{ state.settings.cwd || '未设置目录' }}</b>
         <small>{{ state.settings.model || '默认模型' }}</small>
+        <em>{{ remoteLabel }}</em>
       </div>
     </aside>
 
@@ -190,6 +195,7 @@ watch(() => state.tab, (tab) => {
     <SettingsSheet
       :open="state.settingsOpen"
       :settings="mutableState.settings"
+      :ssh="state.ssh"
       :models="mutableState.models"
       @close="mutableState.settingsOpen = false"
       @save="session.saveSettings"

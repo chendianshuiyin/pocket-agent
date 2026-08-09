@@ -1,4 +1,6 @@
 import { computed, reactive, readonly } from 'vue'
+import { configureGatewayConnection } from '../gateway/SshGatewayClient'
+import type { GatewayMode, GatewaySshStatus } from '../gateway/SshGatewayClient'
 import type { ConnectionSnapshot } from '../rpc/JsonRpcClient'
 import { JsonRpcClient } from '../rpc/JsonRpcClient'
 import { asRecord, isRecord, stringField } from '../protocol/guards'
@@ -27,11 +29,22 @@ export interface SettingsState {
   endpoint: string
   token: string
   rememberToken: boolean
+  connectionMode: GatewayMode
+  sshTarget: string
+  sshPort: string
+  sshIdentityFile: string
+  sshRemotePort: string
+  sshCodexBin: string
   cwd: string
   model: string
   effort: string
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
   approvalPolicy: 'untrusted' | 'on-request' | 'never'
+}
+
+export interface SshConnectionState extends GatewaySshStatus {
+  connecting: boolean
+  error: string | null
 }
 
 export interface PendingServerRequest {
@@ -68,6 +81,7 @@ export interface ShellState {
 interface SessionState {
   connection: ConnectionSnapshot
   settings: SettingsState
+  ssh: SshConnectionState
   models: Model[]
   threads: Thread[]
   activeThread: Thread | null
@@ -120,6 +134,12 @@ function initialSettings(): SettingsState {
     endpoint: storageValue('pocket.endpoint', defaultEndpoint()),
     token,
     rememberToken,
+    connectionMode: storageValue('pocket.connectionMode') === 'ssh' ? 'ssh' : 'local',
+    sshTarget: storageValue('pocket.sshTarget'),
+    sshPort: storageValue('pocket.sshPort'),
+    sshIdentityFile: storageValue('pocket.sshIdentityFile'),
+    sshRemotePort: storageValue('pocket.sshRemotePort', '4500'),
+    sshCodexBin: storageValue('pocket.sshCodexBin', 'codex'),
     cwd: storageValue('pocket.cwd'),
     model: storageValue('pocket.model'),
     effort: storageValue('pocket.effort'),
@@ -131,6 +151,7 @@ function initialSettings(): SettingsState {
 const state = reactive<SessionState>({
   connection: fallbackConnection,
   settings: initialSettings(),
+  ssh: { mode: 'local', connected: false, connecting: false, error: null },
   models: [],
   threads: [],
   activeThread: null,
@@ -194,23 +215,28 @@ async function connect(): Promise<void> {
   }
   state.lastError = null
   try {
+    await prepareGatewayConnection()
     await ensureClient().connect()
   } catch (error) {
     state.lastError = errorMessage(error)
   }
 }
 
-async function reconnect(): Promise<void> {
+async function reconnect(): Promise<boolean> {
   if (!hasGatewayToken(state.settings.token)) {
     stopForMissingToken()
-    return
+    return false
   }
   const rpc = ensureClient()
   rpc.updateConfig({ url: state.settings.endpoint, token: state.settings.token })
   try {
+    rpc.disconnect()
+    await prepareGatewayConnection()
     await rpc.reconnectNow()
+    return true
   } catch (error) {
     state.lastError = errorMessage(error)
+    return false
   }
 }
 
@@ -231,10 +257,16 @@ function stopForMissingToken(): void {
   state.settingsOpen = true
 }
 
-function saveSettings(next: SettingsState): void {
+async function saveSettings(next: SettingsState): Promise<void> {
   Object.assign(state.settings, next)
   localStorage.setItem('pocket.endpoint', next.endpoint)
   localStorage.setItem('pocket.rememberToken', String(next.rememberToken))
+  localStorage.setItem('pocket.connectionMode', next.connectionMode)
+  localStorage.setItem('pocket.sshTarget', next.sshTarget)
+  localStorage.setItem('pocket.sshPort', next.sshPort)
+  localStorage.setItem('pocket.sshIdentityFile', next.sshIdentityFile)
+  localStorage.setItem('pocket.sshRemotePort', next.sshRemotePort)
+  localStorage.setItem('pocket.sshCodexBin', next.sshCodexBin)
   localStorage.setItem('pocket.cwd', next.cwd)
   localStorage.setItem('pocket.model', next.model)
   localStorage.setItem('pocket.effort', next.effort)
@@ -250,8 +282,36 @@ function saveSettings(next: SettingsState): void {
     stopForMissingToken()
     return
   }
-  state.settingsOpen = false
-  void reconnect()
+  state.settingsOpen = !(await reconnect())
+}
+
+async function prepareGatewayConnection(): Promise<void> {
+  state.ssh.connecting = true
+  state.ssh.error = null
+  try {
+    const status = await configureGatewayConnection({
+      mode: state.settings.connectionMode,
+      endpoint: state.settings.endpoint,
+      token: state.settings.token,
+      sshTarget: state.settings.sshTarget,
+      sshPort: state.settings.sshPort,
+      sshIdentityFile: state.settings.sshIdentityFile,
+      sshRemotePort: state.settings.sshRemotePort,
+      sshCodexBin: state.settings.sshCodexBin,
+    })
+    Object.assign(state.ssh, {
+      target: undefined,
+      localPort: undefined,
+      remotePort: undefined,
+    }, status, { error: null })
+  } catch (error) {
+    const message = errorMessage(error)
+    state.ssh.error = message
+    const prefix = state.settings.connectionMode === 'ssh' ? 'SSH 连接失败' : 'Gateway 准备失败'
+    throw new Error(`${prefix}：${message}`)
+  } finally {
+    state.ssh.connecting = false
+  }
 }
 
 async function restoreWorkspace(): Promise<void> {
