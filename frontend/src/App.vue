@@ -139,6 +139,8 @@ watch(() => state.tab, (tab) => {
 
         <ComposerBox
           :attachments="mutableState.attachments"
+          :skills="mutableState.skills"
+          :skills-loading="state.loadingSkills"
           :running="running"
           :disabled="!connected"
           @send="session.sendMessage"
@@ -146,6 +148,8 @@ watch(() => state.tab, (tab) => {
           @image="session.attachBrowserImage"
           @host-path="session.attachHostPath"
           @remove="session.removeAttachment"
+          @skill="session.attachSkill"
+          @command="session.executeSlashCommand"
         />
       </section>
 

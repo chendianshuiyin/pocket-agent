@@ -166,6 +166,22 @@ export interface McpServerStatus extends UnknownRecord {
   authStatus: 'unsupported' | 'notLoggedIn' | 'bearerToken' | 'oAuth' | string
 }
 
+export interface SkillMetadata extends UnknownRecord {
+  name: string
+  description: string
+  shortDescription?: string
+  path: string
+  scope: 'user' | 'repo' | 'system' | 'admin'
+  enabled: boolean
+  interface?: UnknownRecord
+  dependencies?: UnknownRecord
+}
+
+export interface SkillErrorInfo {
+  path: string
+  message: string
+}
+
 export interface ClientMethodMap {
   initialize: { params: InitializeParams; result: InitializeResponse }
   'model/list': { params: { cursor?: string | null; limit?: number | null; includeHidden?: boolean | null }; result: { data: Model[]; nextCursor: string | null } }
@@ -176,6 +192,9 @@ export interface ClientMethodMap {
   'turn/start': { params: TurnStartParams; result: { turn: Turn } }
   'turn/steer': { params: TurnSteerParams; result: UnknownRecord }
   'turn/interrupt': { params: { threadId: string; turnId: string }; result: UnknownRecord }
+  'thread/compact/start': { params: { threadId: string }; result: UnknownRecord }
+  'review/start': { params: { threadId: string; target: { type: 'uncommittedChanges' }; delivery?: 'inline' | 'detached' | null }; result: { turn: Turn; reviewThreadId: string } }
+  'skills/list': { params: { cwds?: string[]; forceReload?: boolean }; result: { data: { cwd: string; skills: SkillMetadata[]; errors: SkillErrorInfo[] }[] } }
   'app/list': { params: { cursor?: string | null; limit?: number | null; threadId?: string | null; forceRefetch?: boolean }; result: { data: AppInfo[]; nextCursor: string | null } }
   'mcpServerStatus/list': { params: { cursor?: string | null; limit?: number | null; detail?: 'full' | 'toolsAndAuthOnly' | null; threadId?: string | null }; result: { data: McpServerStatus[]; nextCursor: string | null } }
   'fs/readDirectory': { params: { path: string }; result: { entries: FsReadDirectoryEntry[] } }

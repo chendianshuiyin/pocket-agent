@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Bot, Box, Brain, CheckCircle2, ChevronRight, CircleDotDashed, FileDiff, Globe2, Image, ListChecks, TerminalSquare, UserRound, Wrench } from '@lucide/vue'
+import { Bot, Box, Brain, CheckCircle2, ChevronRight, CircleDotDashed, FileDiff, Globe2, Image, ListChecks, Sparkles, TerminalSquare, UserRound, Wrench } from '@lucide/vue'
 import { asRecord } from '../protocol/guards'
 import type { ThreadItem } from '../protocol/types'
 
@@ -15,11 +15,17 @@ const textContent = computed(() => {
       if (value.type === 'localImage') return `📷 ${value.path ?? ''}`
       if (value.type === 'image') return '📷 图片'
       if (value.type === 'mention') return `📎 ${value.name ?? value.path ?? ''}`
+      if (value.type === 'skill') return ''
       return JSON.stringify(part)
-    }).join('\n')
+    }).filter(Boolean).join('\n')
   }
   if (props.item.type === 'agentMessage' || props.item.type === 'plan') return String(props.item.text ?? '')
   return ''
+})
+
+const skillInputs = computed(() => {
+  if (props.item.type !== 'userMessage' || !Array.isArray(props.item.content)) return []
+  return props.item.content.map(asRecord).filter((part) => part.type === 'skill')
 })
 
 const reasoning = computed(() => {
@@ -39,7 +45,13 @@ const isKnown = computed(() => [
 <template>
   <article v-if="item.type === 'userMessage'" class="message-card user-message">
     <div class="avatar user"><UserRound :size="17" /></div>
-    <div class="message-body"><span class="message-label">YOU</span><p>{{ textContent }}</p></div>
+    <div class="message-body">
+      <span class="message-label">YOU</span>
+      <div v-if="skillInputs.length" class="skill-call-list">
+        <span v-for="skill in skillInputs" :key="String(skill.path)"><Sparkles :size="14" /><b>${{ skill.name }}</b><small>{{ skill.path }}</small></span>
+      </div>
+      <p v-if="textContent">{{ textContent }}</p>
+    </div>
   </article>
 
   <article v-else-if="item.type === 'agentMessage'" class="message-card agent-message">

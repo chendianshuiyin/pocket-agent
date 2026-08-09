@@ -1,29 +1,79 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { ArrowUp, ImagePlus, Link2, Paperclip, Square, X } from '@lucide/vue'
-import type { UserInput } from '../protocol/types'
+import { ArrowUp, ImagePlus, Link2, Paperclip, Search, Sparkles, Square, TerminalSquare, X } from '@lucide/vue'
+import { SLASH_COMMANDS } from '../commands/slashCommands'
+import type { SlashCommand, SlashCommandName } from '../commands/slashCommands'
+import type { SkillMetadata, UserInput } from '../protocol/types'
 import { basename } from '../utils/paths'
 
-const props = defineProps<{ attachments: readonly UserInput[]; running: boolean; disabled: boolean }>()
+const props = defineProps<{ attachments: readonly UserInput[]; skills: readonly SkillMetadata[]; skillsLoading: boolean; running: boolean; disabled: boolean }>()
 const emit = defineEmits<{
   send: [text: string]
   interrupt: []
   image: [file: File]
   hostPath: [path: string]
   remove: [index: number]
+  skill: [skill: SkillMetadata]
+  command: [name: SlashCommandName]
 }>()
 
 const text = ref('')
 const pathInput = ref('')
 const addingPath = ref(false)
 const textarea = ref<HTMLTextAreaElement>()
+const skillPicker = ref(false)
 const canSend = computed(() => !props.disabled && (!!text.value.trim() || props.attachments.length > 0))
+const commandQuery = computed(() => text.value.startsWith('/') && !text.value.slice(1).includes(' ') ? text.value.slice(1).toLowerCase() : null)
+const visibleCommands = computed(() => commandQuery.value === null ? [] : SLASH_COMMANDS.filter((command) => command.name.includes(commandQuery.value!)))
+const visibleSkills = computed(() => {
+  const query = skillPicker.value ? text.value.trim().toLowerCase() : ''
+  return props.skills.filter((skill) => !query || skill.name.toLowerCase().includes(query) || skill.description.toLowerCase().includes(query))
+})
 
 function submit(): void {
   if (!canSend.value) return
+  const command = parseCommand(text.value)
+  if (command) {
+    selectCommand(command)
+    return
+  }
   emit('send', text.value)
   text.value = ''
   void nextTick(() => resize())
+}
+
+function parseCommand(value: string): SlashCommand | undefined {
+  const match = /^\/([a-z]+)\s*$/.exec(value.trim())
+  return match ? SLASH_COMMANDS.find((command) => command.name === match[1]) : undefined
+}
+
+function selectCommand(command: SlashCommand): void {
+  if (command.name === 'skills') {
+    emit('command', command.name)
+    skillPicker.value = true
+    text.value = ''
+    void nextTick(() => textarea.value?.focus())
+    return
+  }
+  emit('command', command.name)
+  text.value = ''
+  void nextTick(() => resize())
+}
+
+function selectSkill(skill: SkillMetadata): void {
+  if (!skill.enabled) return
+  emit('skill', skill)
+  skillPicker.value = false
+  text.value = `$${skill.name} `
+  void nextTick(() => {
+    textarea.value?.focus()
+    resize()
+  })
+}
+
+function closePalette(): void {
+  skillPicker.value = false
+  if (text.value.startsWith('/')) text.value = ''
 }
 
 function addPath(): void {
@@ -49,12 +99,33 @@ function resize(): void {
 function attachmentLabel(item: UserInput): string {
   if (item.type === 'localImage' || item.type === 'mention') return basename(item.path)
   if (item.type === 'image') return item.url.startsWith('data:') ? '本地图片' : '网络图片'
+  if (item.type === 'skill') return `$${item.name}`
   return item.type
 }
 </script>
 
 <template>
   <div class="composer-wrap">
+    <Transition name="fade">
+      <section v-if="visibleCommands.length || skillPicker" class="command-palette">
+        <header>
+          <span><Search :size="15" />{{ skillPicker ? '服务器 Skills' : 'Slash commands' }}</span>
+          <button type="button" aria-label="关闭命令面板" @click="closePalette"><X :size="15" /></button>
+        </header>
+        <div v-if="skillPicker" class="command-list">
+          <button v-for="skill in visibleSkills" :key="skill.path" type="button" :disabled="!skill.enabled" data-kind="skill" @click="selectSkill(skill)">
+            <Sparkles :size="16" /><span><b>${{ skill.name }}</b><small>{{ skill.description || skill.shortDescription }}</small></span><em>{{ skill.scope }}</em>
+          </button>
+          <p v-if="skillsLoading" class="palette-empty">正在读取远端 Skills…</p>
+          <p v-else-if="!visibleSkills.length" class="palette-empty">当前工作目录没有可用 Skill</p>
+        </div>
+        <div v-else class="command-list">
+          <button v-for="command in visibleCommands" :key="command.name" type="button" data-kind="command" @click="selectCommand(command)">
+            <TerminalSquare :size="16" /><span><b>/{{ command.name }}</b><small>{{ command.description }}</small></span><em>{{ command.group === 'codex' ? 'CODEX' : 'UI' }}</em>
+          </button>
+        </div>
+      </section>
+    </Transition>
     <Transition name="fade">
       <form v-if="addingPath" class="path-adder" @submit.prevent="addPath">
         <Link2 :size="16" /><input v-model="pathInput" autofocus placeholder="服务器上的图片或文件绝对路径" /><button class="text-button">附加</button>

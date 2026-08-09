@@ -1,4 +1,5 @@
 import { computed, reactive, readonly } from 'vue'
+import type { SlashCommandName } from '../commands/slashCommands'
 import { configureGatewayConnection } from '../gateway/SshGatewayClient'
 import type { GatewayMode, GatewaySshStatus } from '../gateway/SshGatewayClient'
 import type { ConnectionSnapshot } from '../rpc/JsonRpcClient'
@@ -12,6 +13,8 @@ import type {
   Model,
   RpcNotification,
   ServerRequestEnvelope,
+  SkillErrorInfo,
+  SkillMetadata,
   TerminalLine,
   Thread,
   ThreadItem,
@@ -101,6 +104,9 @@ interface SessionState {
   shell: ShellState
   apps: AppInfo[]
   mcpServers: McpServerStatus[]
+  skills: SkillMetadata[]
+  skillErrors: SkillErrorInfo[]
+  loadingSkills: boolean
   loadingApps: boolean
   tab: MainTab
   settingsOpen: boolean
@@ -171,6 +177,9 @@ const state = reactive<SessionState>({
   shell: { command: '', stdin: '', processId: null, interactive: false, running: false, output: '', exitCode: null, error: null },
   apps: [],
   mcpServers: [],
+  skills: [],
+  skillErrors: [],
+  loadingSkills: false,
   loadingApps: false,
   tab: 'chat',
   settingsOpen: false,
@@ -325,7 +334,7 @@ async function restoreWorkspace(): Promise<void> {
     const discovery = Promise.allSettled([refreshModels(), refreshThreads()])
     if (remembered) await openThread(remembered, true)
     await discovery
-    void refreshIntegrations()
+    void Promise.allSettled([refreshIntegrations(), refreshSkills()])
   } finally {
     state.restoring = false
   }
@@ -379,6 +388,7 @@ async function openThread(threadId: string, isRestore = false): Promise<void> {
     state.settings.model = resumed.model || state.settings.model
     state.files.path = state.settings.cwd
     syncActiveTurn()
+    if (!isRestore) void refreshSkills()
     if (!isRestore) state.tab = 'chat'
   } catch (error) {
     if (generation === openThreadGeneration) {
@@ -409,6 +419,7 @@ async function startThread(): Promise<void> {
     state.settings.cwd = response.cwd || state.settings.cwd
     upsertThread(response.thread)
     state.tab = 'chat'
+    void refreshSkills()
   } catch (error) {
     if (generation === openThreadGeneration) state.lastError = errorMessage(error)
   } finally {
@@ -464,6 +475,10 @@ async function interruptTurn(): Promise<void> {
 function addAttachment(input: UserInput): void {
   const signature = JSON.stringify(input)
   if (!state.attachments.some((item) => JSON.stringify(item) === signature)) state.attachments.push(input)
+}
+
+function attachSkill(skill: SkillMetadata): void {
+  addAttachment({ type: 'skill', name: skill.name, path: skill.path })
 }
 
 function removeAttachment(index: number): void {
@@ -628,6 +643,93 @@ async function refreshIntegrations(forceRefetch = false): Promise<void> {
   }
 }
 
+async function refreshSkills(forceReload = false): Promise<void> {
+  state.loadingSkills = true
+  try {
+    const cwd = state.settings.cwd
+    const response = await ensureClient().call('skills/list', {
+      ...(cwd ? { cwds: [cwd] } : {}),
+      forceReload,
+    })
+    const entry = (cwd ? response.data.find((candidate) => candidate.cwd === cwd) : undefined) ?? response.data[0]
+    state.skills = entry?.skills ?? []
+    state.skillErrors = entry?.errors ?? []
+    for (const error of state.skillErrors) appendEvent('skills/list', error.message, error, 'warn')
+  } catch (error) {
+    appendEvent('skills/list', errorMessage(error), error, 'warn')
+  } finally {
+    state.loadingSkills = false
+  }
+}
+
+async function executeSlashCommand(name: SlashCommandName): Promise<void> {
+  switch (name) {
+    case 'new':
+      await startThread()
+      return
+    case 'threads':
+      state.tab = 'threads'
+      void refreshThreads()
+      return
+    case 'files':
+      state.tab = 'files'
+      return
+    case 'terminal':
+      state.tab = 'terminal'
+      return
+    case 'apps':
+      state.tab = 'apps'
+      void refreshIntegrations()
+      return
+    case 'model':
+    case 'status':
+      state.settingsOpen = true
+      return
+    case 'skills':
+      await refreshSkills(true)
+      return
+    case 'compact':
+      await compactActiveThread()
+      return
+    case 'review':
+      await reviewActiveThread()
+  }
+}
+
+async function compactActiveThread(): Promise<void> {
+  if (!state.activeThreadId) {
+    state.lastError = '请先打开一个任务再压缩上下文'
+    return
+  }
+  try {
+    await ensureClient().call('thread/compact/start', { threadId: state.activeThreadId })
+    appendEvent('thread/compact/start', '已开始压缩当前任务上下文', { threadId: state.activeThreadId }, 'info', 'out')
+  } catch (error) {
+    state.lastError = errorMessage(error)
+    appendEvent('thread/compact/start', state.lastError, error, 'error')
+  }
+}
+
+async function reviewActiveThread(): Promise<void> {
+  if (!state.activeThreadId) {
+    state.lastError = '请先打开一个任务再开始 Review'
+    return
+  }
+  try {
+    const response = await ensureClient().call('review/start', {
+      threadId: state.activeThreadId,
+      target: { type: 'uncommittedChanges' },
+      delivery: 'inline',
+    })
+    upsertTurn(response.turn)
+    state.activeTurnId = response.turn.status === 'inProgress' ? response.turn.id : null
+    appendEvent('review/start', '已开始 Review 未提交变更', { threadId: state.activeThreadId }, 'info', 'out')
+  } catch (error) {
+    state.lastError = errorMessage(error)
+    appendEvent('review/start', state.lastError, error, 'error')
+  }
+}
+
 function respondApproval(index: number, decision: ApprovalDecision): void {
   const pending = state.pendingRequests[index]
   if (!pending) return
@@ -664,6 +766,9 @@ function handleNotification(notification: RpcNotification): void {
   if (!shouldApplyScopedNotification(state.activeThreadId, notification.method, params)) return
 
   switch (notification.method) {
+    case 'skills/changed':
+      void refreshSkills(true)
+      return
     case 'app/list/updated':
       if (Array.isArray(params.data)) state.apps = params.data.filter(isAppInfo)
       return
@@ -896,6 +1001,7 @@ export function useCodexSession() {
     interruptTurn,
     addAttachment,
     removeAttachment,
+    attachSkill,
     attachBrowserImage,
     attachHostPath,
     readDirectory,
@@ -906,6 +1012,8 @@ export function useCodexSession() {
     writeTerminal,
     terminateTerminal,
     refreshIntegrations,
+    refreshSkills,
+    executeSlashCommand,
     respondApproval,
     respondUserInput,
     rejectUnsupportedRequest,
