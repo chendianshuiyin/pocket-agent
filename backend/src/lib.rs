@@ -64,7 +64,7 @@ pub fn router(state: AppState) -> Router {
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &axum::http::Request<_>| {
-                    // Use only the path: a browser may carry the gateway token in the query.
+                    // Use only the path: legacy clients may carry the gateway token in the query.
                     info_span!(
                         "http_request",
                         method = %request.method(),

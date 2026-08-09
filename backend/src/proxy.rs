@@ -21,6 +21,7 @@ pub async fn websocket_handler(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    let selected_protocol = auth::websocket_protocol(&headers, &state.config.token);
     if !auth::authorized(&headers, query.token.as_deref(), &state.config.token) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
@@ -34,7 +35,12 @@ pub async fn websocket_handler(
     };
 
     let shutdown = state.subscribe_shutdown();
-    upgrade.on_upgrade(move |client| relay(client, upstream, shutdown))
+    match selected_protocol {
+        Some(protocol) => upgrade
+            .protocols([protocol])
+            .on_upgrade(move |client| relay(client, upstream, shutdown)),
+        None => upgrade.on_upgrade(move |client| relay(client, upstream, shutdown)),
+    }
 }
 
 async fn relay(

@@ -89,6 +89,8 @@ watch(() => state.tab, (tab) => {
             :key="`${pending.request.id}-${pending.request.method}`"
             :pending="pending"
             :index="index"
+            :active-thread-id="state.activeThreadId"
+            :thread-label="session.threadLabel(typeof pending.request.params.threadId === 'string' ? pending.request.params.threadId : '')"
             @decide="session.respondApproval"
             @answer="session.respondUserInput"
             @unsupported="session.rejectUnsupportedRequest"

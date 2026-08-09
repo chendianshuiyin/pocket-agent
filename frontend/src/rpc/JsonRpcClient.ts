@@ -29,7 +29,15 @@ export interface JsonRpcClientOptions {
   reconnectBaseMs?: number
   reconnectMaxMs?: number
   random?: () => number
-  socketFactory?: (url: string) => WebSocket
+  socketFactory?: (url: string, protocols?: string[]) => WebSocket
+}
+
+export const GATEWAY_TOKEN_PROTOCOL_PREFIX = 'pocket-agent-token.'
+
+export function gatewayTokenProtocol(token: string): string {
+  const bytes = new TextEncoder().encode(token)
+  const encoded = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${GATEWAY_TOKEN_PROTOCOL_PREFIX}${encoded}`
 }
 
 interface PendingRequest {
@@ -118,10 +126,13 @@ export class JsonRpcClient {
     if (this.connectPromise) return this.connectPromise
     this.manuallyClosed = false
     this.clearReconnectTimer()
-    this.connectPromise = this.openSocket().finally(() => {
-      this.connectPromise = null
-    })
-    return this.connectPromise
+    const connection = this.openSocket()
+    this.connectPromise = connection
+    const clearCurrentConnection = (): void => {
+      if (this.connectPromise === connection) this.connectPromise = null
+    }
+    void connection.then(clearCurrentConnection, clearCurrentConnection)
+    return connection
   }
 
   disconnect(): void {
@@ -138,6 +149,8 @@ export class JsonRpcClient {
     this.clearReconnectTimer()
     const superseded = this.socket
     this.socket = null
+    this.connectPromise = null
+    this.rejectPending(new Error('连接已替换'))
     superseded?.close(4000, 'reconnect')
     this.setState({ phase: 'reconnecting', attempt: 0, nextRetryMs: 0, error: null })
     return this.connect()
@@ -191,40 +204,59 @@ export class JsonRpcClient {
     this.setState({ phase: isRetry ? 'reconnecting' : 'connecting', nextRetryMs: null, error: null })
 
     await new Promise<void>((resolve, reject) => {
-      const factory = this.config.socketFactory ?? ((url: string) => new WebSocket(url))
-      const socket = factory(this.connectionUrl())
+      const factory = this.config.socketFactory ?? ((url: string, protocols?: string[]) => new WebSocket(url, protocols))
+      const protocols = this.config.token ? [gatewayTokenProtocol(this.config.token)] : undefined
+      const socket = factory(this.connectionUrl(), protocols)
       this.socket = socket
       let settled = false
 
+      const rejectIfUnsettled = (error: Error): void => {
+        if (settled) return
+        settled = true
+        reject(error)
+      }
+
       socket.addEventListener('open', () => {
+        if (this.socket !== socket) {
+          socket.close(4000, 'superseded')
+          rejectIfUnsettled(new Error('WebSocket 连接已替换'))
+          return
+        }
         void this.initialize().then(() => {
+          if (this.socket !== socket) {
+            rejectIfUnsettled(new Error('WebSocket 连接已替换'))
+            return
+          }
           settled = true
           resolve()
         }).catch((error: unknown) => {
           const failure = error instanceof Error ? error : new Error(String(error))
+          if (this.socket !== socket) {
+            rejectIfUnsettled(new Error('WebSocket 连接已替换'))
+            return
+          }
           this.setState({ error: failure.message })
           socket.close(1011, 'initialize failed')
-          if (!settled) {
-            settled = true
-            reject(failure)
-          }
+          rejectIfUnsettled(failure)
         })
       })
 
-      socket.addEventListener('message', (event) => this.handleMessage(event.data))
+      socket.addEventListener('message', (event) => {
+        if (this.socket === socket) this.handleMessage(event.data)
+      })
       socket.addEventListener('error', () => {
-        this.setState({ error: 'WebSocket 连接失败' })
+        if (this.socket === socket) this.setState({ error: 'WebSocket 连接失败' })
       })
       socket.addEventListener('close', (event) => {
         // A superseded socket may deliver close after a replacement is ready.
         // It must not reject the replacement's requests or start a second retry loop.
-        if (this.socket !== socket) return
+        if (this.socket !== socket) {
+          rejectIfUnsettled(new Error('WebSocket 连接已替换'))
+          return
+        }
         this.socket = null
         this.rejectPending(new Error(`连接中断 (${event.code})`))
-        if (!settled) {
-          settled = true
-          reject(new Error(event.reason || `WebSocket 已关闭 (${event.code})`))
-        }
+        rejectIfUnsettled(new Error(event.reason || `WebSocket 已关闭 (${event.code})`))
         if (!this.manuallyClosed) this.scheduleReconnect(event.reason || `连接中断 (${event.code})`)
       })
     })
@@ -321,7 +353,6 @@ export class JsonRpcClient {
 
   private connectionUrl(): string {
     const url = new URL(this.config.url, typeof window !== 'undefined' ? window.location.href : 'http://localhost')
-    if (this.config.token) url.searchParams.set('token', this.config.token)
     return url.toString()
   }
 

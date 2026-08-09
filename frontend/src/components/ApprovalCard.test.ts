@@ -25,4 +25,23 @@ describe('ApprovalCard requestUserInput', () => {
     expect(wrapper.text()).toContain('服务器可能在')
     wrapper.unmount()
   })
+
+  it('清楚标记来自其他 thread 的后台审批', () => {
+    const pending: PendingServerRequest = {
+      receivedAt: Date.now(),
+      request: {
+        id: 10,
+        method: 'item/commandExecution/requestApproval',
+        params: { threadId: 'thread-background-123', turnId: 'turn', itemId: 'item', command: 'git status', cwd: 'D:\\repo' },
+      },
+    }
+    const wrapper = mount(ApprovalCard, {
+      props: { pending, index: 0, activeThreadId: 'thread-active', threadLabel: '后台构建任务' },
+    })
+    expect(wrapper.get('.request-context').classes()).toContain('background')
+    expect(wrapper.text()).toContain('后台任务')
+    expect(wrapper.text()).toContain('后台构建任务')
+    expect(wrapper.text()).toContain('D:\\repo')
+    wrapper.unmount()
+  })
 })

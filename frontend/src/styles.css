@@ -200,6 +200,11 @@ code, pre, .mono { font-family: "DM Mono", "Cascadia Code", Consolas, monospace;
 .approval-card > header > span:last-child { display: flex; flex-direction: column; }
 .approval-card header small { color: #9b7442; font: 500 8px "DM Mono", monospace; letter-spacing: .1em; }
 .approval-card header b { font-size: 13px; }
+.request-context { min-width: 0; margin: -2px 0 10px; padding: 7px 8px; border-radius: 9px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; color: #536055; background: rgba(255,255,255,.48); }
+.request-context.background { color: #78483d; background: #f1d8ca; }
+.request-context span { font: 600 8px "DM Mono", monospace; letter-spacing: .06em; }
+.request-context b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.request-context code { color: inherit; font-size: 8px; opacity: .7; }
 .approval-reason { margin: 8px 2px; color: #6b5639; font-size: 11px; line-height: 1.55; }
 .network-context { margin: 7px 0; padding: 7px 9px; border-radius: 9px; color: #36566f; background: #dce6ec; font: 500 9px "DM Mono", monospace; overflow-wrap: anywhere; }
 .command-preview { margin: 8px 0 5px; padding: 11px; border-radius: 11px; color: #e4e8e4; background: #171c18; font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }

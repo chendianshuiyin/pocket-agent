@@ -2,14 +2,17 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{Request, StatusCode, header::SEC_WEBSOCKET_PROTOCOL},
 };
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use pocket_agent_gateway::{AppState, Config, router};
 use tempfile::TempDir;
 use tokio::{net::TcpListener, task::JoinHandle};
-use tokio_tungstenite::{accept_async, connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    accept_async, connect_async,
+    tungstenite::{Message, client::IntoClientRequest},
+};
 use tower::ServiceExt;
 use url::Url;
 
@@ -126,12 +129,18 @@ async fn websocket_requires_a_valid_token() {
 #[tokio::test]
 async fn websocket_relays_text_and_binary_without_interpreting_them() {
     let servers = start_servers().await;
-    let (mut websocket, _) = connect_async(format!(
-        "ws://{}/ws?token=test-secret",
-        servers.gateway_addr
-    ))
-    .await
-    .unwrap();
+    let mut request = format!("ws://{}/ws", servers.gateway_addr)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        SEC_WEBSOCKET_PROTOCOL,
+        "pocket-agent-token.746573742d736563726574".parse().unwrap(),
+    );
+    let (mut websocket, response) = connect_async(request).await.unwrap();
+    assert_eq!(
+        response.headers().get(SEC_WEBSOCKET_PROTOCOL).unwrap(),
+        "pocket-agent-token.746573742d736563726574"
+    );
 
     websocket
         .send(Message::Text(r#"{"jsonrpc":"2.0","id":1}"#.into()))

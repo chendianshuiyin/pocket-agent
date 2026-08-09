@@ -9,7 +9,7 @@ class FakeSocket extends EventTarget {
   readyState = FakeSocket.CONNECTING
   sent: string[] = []
 
-  constructor(readonly url: string) { super() }
+  constructor(readonly url: string, readonly protocols?: string[]) { super() }
 
   open(): void {
     this.readyState = FakeSocket.OPEN
@@ -55,16 +55,17 @@ describe('JsonRpcClient', () => {
     vi.useRealTimers()
   })
 
-  it('执行 initialize/initialized，并通过 query token 连接网关', async () => {
+  it('执行 initialize/initialized，并通过 WebSocket subprotocol 发送 token', async () => {
     const sockets: FakeSocket[] = []
     const client = new JsonRpcClient({
       url: 'ws://127.0.0.1:8787/ws',
       token: 'a token',
-      socketFactory: (url) => { const socket = new FakeSocket(url); sockets.push(socket); return socket as unknown as WebSocket },
+      socketFactory: (url, protocols) => { const socket = new FakeSocket(url, protocols); sockets.push(socket); return socket as unknown as WebSocket },
     })
     const promise = client.connect()
     const socket = sockets[0]!
-    expect(socket.url).toBe('ws://127.0.0.1:8787/ws?token=a+token')
+    expect(socket.url).toBe('ws://127.0.0.1:8787/ws')
+    expect(socket.protocols).toEqual(['pocket-agent-token.6120746f6b656e'])
     socket.open()
     const initialize = lastMessage(socket)
     expect(initialize.method).toBe('initialize')
@@ -76,7 +77,7 @@ describe('JsonRpcClient', () => {
     client.destroy()
   })
 
-  it('忽略被替换 socket 的迟到 close，不干扰新连接 pending request', async () => {
+  it('忽略被替换 socket 的迟到 close/message，不干扰新连接 pending request', async () => {
     const sockets: FakeSocket[] = []
     const client = new JsonRpcClient({
       url: 'ws://localhost/ws',
@@ -95,10 +96,44 @@ describe('JsonRpcClient', () => {
 
     const request = client.callUnknown('custom/ping', {})
     const ping = lastMessage(newSocket)
+    const notification = vi.fn()
+    client.onNotification(notification)
+    oldSocket.receive({ method: 'thread/started', params: { thread: { id: 'stale' } } })
+    oldSocket.receive({ id: ping.id, result: { pong: 'stale' } })
     oldSocket.dispatchEvent(new CloseEvent('close', { code: 1006, reason: 'late close' }))
     newSocket.receive({ id: ping.id, result: { pong: true } })
     await expect(request).resolves.toEqual({ pong: true })
+    expect(notification).not.toHaveBeenCalled()
     expect(sockets).toHaveLength(2)
+    expect(client.state.phase).toBe('ready')
+    client.destroy()
+  })
+
+  it('主动重连会拒绝旧连接的无超时请求，并允许替换正在建立的连接', async () => {
+    const sockets: FakeSocket[] = []
+    const client = new JsonRpcClient({
+      url: 'ws://localhost/ws',
+      socketFactory: (url) => { const socket = new FakeSocket(url); sockets.push(socket); return socket as unknown as WebSocket },
+    })
+    await ready(client, sockets)
+    const oldRequest = client.call('command/exec', { command: ['pwsh'], processId: 'old', tty: true }, { timeoutMs: null })
+    const reconnecting = client.reconnectNow()
+    await expect(oldRequest).rejects.toThrow('连接已替换')
+    const replacement = sockets[1]!
+    replacement.open()
+    const initialize = lastMessage(replacement)
+    replacement.receive({ id: initialize.id, result: server })
+    await reconnecting
+
+    client.disconnect()
+    const firstAttempt = client.connect()
+    const replacingAttempt = client.reconnectNow()
+    await expect(firstAttempt).rejects.toThrow('WebSocket 连接已替换')
+    const finalSocket = sockets[3]!
+    finalSocket.open()
+    const finalInitialize = lastMessage(finalSocket)
+    finalSocket.receive({ id: finalInitialize.id, result: server })
+    await replacingAttempt
     expect(client.state.phase).toBe('ready')
     client.destroy()
   })

@@ -157,6 +157,7 @@ const state = reactive<SessionState>({
 
 let client: JsonRpcClient | null = null
 let initialized = false
+let openThreadGeneration = 0
 
 export const ALL_INTERACTIVE_SOURCE_KINDS = [
   'cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview', 'subAgentCompact',
@@ -277,29 +278,34 @@ async function refreshThreads(): Promise<void> {
 }
 
 async function openThread(threadId: string, isRestore = false): Promise<void> {
+  const generation = ++openThreadGeneration
   state.loadingConversation = true
-  state.activeThreadId = threadId
-  localStorage.setItem('pocket.activeThread', threadId)
   try {
     const read = await ensureClient().call('thread/read', { threadId, includeTurns: true })
-    state.activeThread = read.thread
-    syncActiveTurn()
     const resumed = await ensureClient().call('thread/resume', { threadId })
-    state.activeThread = resumed.thread.turns.length ? resumed.thread : read.thread
-    state.settings.cwd = resumed.cwd || state.activeThread.cwd || state.settings.cwd
+    if (generation !== openThreadGeneration) return
+
+    const nextThread = resumed.thread.turns.length ? resumed.thread : read.thread
+    state.activeThreadId = threadId
+    state.activeThread = nextThread
+    localStorage.setItem('pocket.activeThread', threadId)
+    state.settings.cwd = resumed.cwd || nextThread.cwd || state.settings.cwd
     state.settings.model = resumed.model || state.settings.model
     state.files.path = state.settings.cwd
     syncActiveTurn()
     if (!isRestore) state.tab = 'chat'
   } catch (error) {
-    state.lastError = errorMessage(error)
-    appendEvent('thread/resume', state.lastError, { threadId }, 'error')
+    if (generation === openThreadGeneration) {
+      state.lastError = errorMessage(error)
+      appendEvent('thread/resume', state.lastError, { threadId }, 'error')
+    }
   } finally {
-    state.loadingConversation = false
+    if (generation === openThreadGeneration) state.loadingConversation = false
   }
 }
 
 async function startThread(): Promise<void> {
+  const generation = ++openThreadGeneration
   state.loadingConversation = true
   try {
     const params: { model?: string; cwd?: string; approvalPolicy: 'untrusted' | 'on-request' | 'never'; sandbox: 'read-only' | 'workspace-write' | 'danger-full-access' } = {
@@ -310,6 +316,7 @@ async function startThread(): Promise<void> {
     if (state.settings.model) params.model = state.settings.model
     if (state.settings.cwd) params.cwd = state.settings.cwd
     const response = await ensureClient().call('thread/start', params)
+    if (generation !== openThreadGeneration) return
     state.activeThread = response.thread
     state.activeThreadId = response.thread.id
     localStorage.setItem('pocket.activeThread', response.thread.id)
@@ -317,9 +324,9 @@ async function startThread(): Promise<void> {
     upsertThread(response.thread)
     state.tab = 'chat'
   } catch (error) {
-    state.lastError = errorMessage(error)
+    if (generation === openThreadGeneration) state.lastError = errorMessage(error)
   } finally {
-    state.loadingConversation = false
+    if (generation === openThreadGeneration) state.loadingConversation = false
   }
 }
 
@@ -571,6 +578,18 @@ function handleNotification(notification: RpcNotification): void {
   if (!shouldApplyScopedNotification(state.activeThreadId, notification.method, params)) return
 
   switch (notification.method) {
+    case 'app/list/updated':
+      if (Array.isArray(params.data)) state.apps = params.data.filter(isAppInfo)
+      return
+    case 'mcpServer/startupStatus/updated': {
+      const server = state.mcpServers.find((candidate) => candidate.name === stringField(params, 'name'))
+      if (server) {
+        server.startupStatus = params.status
+        server.startupError = params.error
+        server.startupFailureReason = params.failureReason
+      }
+      return
+    }
     case 'thread/started': {
       const thread = params.thread
       if (isThread(thread)) upsertThread(thread)
@@ -744,6 +763,10 @@ function isThread(value: unknown): value is Thread {
   return isRecord(value) && typeof value.id === 'string' && Array.isArray(value.turns)
 }
 
+function isAppInfo(value: unknown): value is AppInfo {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string'
+}
+
 function isTurn(value: unknown): value is Turn {
   return isRecord(value) && typeof value.id === 'string' && Array.isArray(value.items)
 }
@@ -759,6 +782,14 @@ function errorMessage(error: unknown): string {
 const conversationItems = computed(() => state.activeThread?.turns.flatMap((turn) => turn.items.map((item) => ({ turnId: turn.id, turnStatus: turn.status, item }))) ?? [])
 const requestCount = computed(() => state.pendingRequests.length)
 
+function threadLabel(threadId: string): string {
+  if (!threadId) return '未标识任务'
+  const thread = state.activeThread?.id === threadId
+    ? state.activeThread
+    : state.threads.find((candidate) => candidate.id === threadId)
+  return thread?.name?.trim() || thread?.preview?.trim() || threadId
+}
+
 export function useCodexSession() {
   if (!initialized) initialized = true
   return {
@@ -766,6 +797,7 @@ export function useCodexSession() {
     mutableState: state,
     conversationItems,
     requestCount,
+    threadLabel,
     connect,
     reconnect,
     disconnect,
@@ -798,6 +830,7 @@ export function __resetSessionForTests(): void {
   client?.destroy()
   client = null
   initialized = false
+  openThreadGeneration = 0
 }
 
 export function createThreadStartSandboxParams(sandbox: SettingsState['sandbox']): { sandbox: SettingsState['sandbox'] } {

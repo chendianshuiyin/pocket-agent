@@ -5,7 +5,12 @@ import { asRecord } from '../protocol/guards'
 import type { PendingServerRequest } from '../stores/useCodexSession'
 import { asUserInputRequest } from '../stores/useCodexSession'
 
-const props = defineProps<{ pending: PendingServerRequest; index: number }>()
+const props = defineProps<{
+  pending: PendingServerRequest
+  index: number
+  activeThreadId?: string | null
+  threadLabel?: string
+}>()
 const emit = defineEmits<{
   decide: [index: number, decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel']
   answer: [index: number, answers: Record<string, string[]>]
@@ -13,6 +18,9 @@ const emit = defineEmits<{
 }>()
 
 const params = computed(() => asRecord(props.pending.request.params))
+const requestThreadId = computed(() => typeof params.value.threadId === 'string' ? params.value.threadId : '')
+const isBackgroundRequest = computed(() => !!requestThreadId.value && requestThreadId.value !== props.activeThreadId)
+const requestThreadLabel = computed(() => props.threadLabel || requestThreadId.value || '未标识任务')
 const inputRequest = computed(() => asUserInputRequest(params.value))
 const answers = reactive<Record<string, string>>({})
 const now = ref(Date.now())
@@ -56,6 +64,12 @@ function submitAnswers(): void {
       </span>
       <span><small>APP-SERVER REQUEST</small><b>{{ title }}</b></span>
     </header>
+
+    <p class="request-context" :class="{ background: isBackgroundRequest }">
+      <span>{{ isBackgroundRequest ? '后台任务' : '当前任务' }}</span>
+      <b>{{ requestThreadLabel }}</b>
+      <code v-if="requestThreadId" :title="requestThreadId">{{ requestThreadId.slice(0, 12) }}</code>
+    </p>
 
     <template v-if="kind === 'command'">
       <p v-if="params.reason" class="approval-reason">{{ params.reason }}</p>
