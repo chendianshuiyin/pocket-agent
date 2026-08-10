@@ -1,7 +1,7 @@
 # Validation record
 
-Date: 2026-08-09  
-Host: Windows 10.0.26200, x86_64  
+Date: 2026-08-11
+Host: Windows 10.0.26200, x86_64
 Codex CLI: `0.144.0`
 
 ## Automated checks
@@ -23,8 +23,8 @@ npm --prefix frontend audit --audit-level=high
 
 Results:
 
-- Rust: 16 tests passed; the opt-in real-Codex test is ignored by the default suite.
-- Frontend: 7 test files and 24 tests passed.
+- Rust: 20 tests passed (14 unit and 6 gateway); the opt-in real-Codex test is ignored by the default suite.
+- Frontend: 10 test files and 35 tests passed.
 - npm audit: 0 vulnerabilities.
 - Vite built the production application and generated the service worker.
 - The generated manifest contains 192 px and 512 px PNG icons, a maskable icon, an explicit app id, start URL, scope, and standalone display mode.
@@ -65,7 +65,7 @@ Verified paths:
 - long task previews remain constrained to the viewport and are clickable
 - the host filesystem lists the configured workspace
 - Apps and MCP status load from `app/list` and `mcpServerStatus/list`
-- the Windows safe-sandbox terminal executes through the buffered fallback and returns stdout plus exit code
+- the SSH terminal session manager renders a dedicated xterm.js canvas and exposes direct PTY controls
 - the page console contains no application errors or warnings
 - the 360 x 800 viewport has no horizontal overflow
 - the Slash palette exposes UI commands plus native `/compact` and `/review`
@@ -73,14 +73,23 @@ Verified paths:
   `$name` marker and explicit Skill attachment
 - SSH settings render and scroll correctly at the Android viewport
 
-The real probe exposed two platform/browser defects that were fixed during validation:
-
-1. Windows sandbox rejects streaming `command/exec`; safe Windows modes now use buffered execution, while Unix and explicit `danger-full-access` retain PTY streaming.
-2. A very long task preview could expand the mobile list to its min-content width; the page and row constraints now prevent horizontal overflow.
+The browser probe exposed a very long task preview that could expand the mobile
+list to its min-content width. Page and row constraints now prevent horizontal
+overflow. The terminal was subsequently moved off app-server `command/exec` and
+onto its own SSH PTY transport.
 
 ## Known transport boundary
 
-The gateway intentionally creates one upstream app-server WebSocket per browser WebSocket and forwards frames without interpreting JSON-RPC. Persisted threads and completed items recover after reconnect. A server request or PTY owned by an upstream connection may be cancelled if that upstream connection itself is lost; the gateway does not replay unresolved approvals across a new upstream connection.
+The gateway intentionally creates one upstream app-server WebSocket per browser
+WebSocket and forwards frames without interpreting JSON-RPC. Persisted threads
+and completed items recover after reconnect. A server request owned by an
+upstream connection may be cancelled if that connection is lost; the gateway
+does not replay unresolved approvals across a new upstream connection.
+
+Each direct terminal has a separate authenticated `/terminal/ws` connection and
+an independent SSH PTY process. App-server reconnects do not close those
+terminals. A terminal does close when its own socket, SSH process, or the gateway
+stops, and terminal output is not replayed after reconnection.
 
 Pending requests carry their source thread in the UI, including a distinct
 background-task label when the user is viewing another thread. Socket
@@ -89,13 +98,17 @@ resolving requests on the new connection.
 
 ## SSH validation boundary
 
-Automated Rust coverage verifies SSH control-route authentication, target
-validation, argument-safe command construction, dynamic upstream selection,
-and managed-process shutdown behavior. The browser client tests verify control
-URL derivation, header-token transport, request serialization, and port
-validation.
+Automated Rust coverage verifies SSH control-route and terminal-WebSocket
+authentication, target/session/path validation, argument-safe command
+construction, dynamic upstream selection, and managed-process shutdown
+behavior. Frontend tests verify control URL derivation, subprotocol-token
+transport, terminal start/input/resize serialization, stale-socket isolation,
+multi-session lifecycle, bounded output, and metadata persistence.
 
-This validation host did not have an SSH server or a configured remote Host
-alias, so no external SSH login was attempted. A deployment must complete the
-key-based `ssh <target>` and `ssh <target> codex --version` checks in
-[SSH remote control](SSH.md) before treating remote connectivity as verified.
+This validation host did not have a configured external SSH target or
+credentials, so no external login was attempted. The automated suite validates
+the PTY protocol, SSH argument construction, transport lifecycle, and renderer,
+but it does not claim a successful external server login. A deployment must
+complete the key-based `ssh <target>` and, when needed,
+`ssh <target> codex --version` checks in [SSH remote control](SSH.md) before
+treating remote connectivity as verified.

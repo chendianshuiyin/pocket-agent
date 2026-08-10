@@ -1,22 +1,26 @@
 # Pocket Agent
 
-Pocket Agent is an Android-first web control plane for Codex. The browser talks
-to a small gateway, which can run `codex app-server` on the gateway machine or
-connect to a server over SSH, start Codex there, and keep the port-forward alive.
-It is intentionally a remote work surface rather than a clone of the Codex UI.
+Pocket Agent is an Android-first web control plane for Codex and remote servers.
+The browser talks to a small gateway, which can run `codex app-server`, manage a
+remote app-server over SSH, and open independent interactive SSH terminals. It
+is intentionally a remote work surface rather than a clone of the Codex UI.
 
 ```text
 Android / desktop browser
         | HTTPS + WSS
         v
 Rust + Axum gateway
-        | local loopback WebSocket
-        | or managed SSH + loopback port-forward
-        v
-codex app-server (local or remote server)
-        |
-        v
-projects, Git, tests, shell, files, MCP
+        |                              |
+        | /ws                          | /terminal/ws
+        | local WebSocket or           | native PTY + ssh -tt
+        | managed SSH port-forward     |
+        v                              v
+codex app-server                 remote login shell
+(local or remote)                       |
+        |                               | run codex directly
+        +---------------+---------------+
+                        v
+              projects, Git, tests, files, MCP
 ```
 
 The Rust service owns the network boundary and static assets. It does not
@@ -29,22 +33,25 @@ protocol and preserves unknown inbound fields for forward compatibility.
 - Model and reasoning-effort selection
 - Thread list, history, new thread, resume, reconnect, steer, and interrupt
 - Key/agent-based SSH connection, remote app-server startup, and tunnel lifecycle
+- Direct key/agent-based SSH terminal sessions, independent of app-server readiness
+- Native PTY input, resize, process exit, ANSI color, and full-screen TUI rendering
+- Up to eight named SSH sessions with per-session working directory and command history
 - Slash command palette, including native `/compact` and `/review`
 - Remote `skills/list`, `skills/changed` refresh, explicit Skill input, and Skill call rendering
 - Streaming agent messages, reasoning, plans, commands, file changes, and diff
 - Command/file approval with accept, accept-for-session, decline, and cancel
 - Full `item/tool/requestUserInput` UI, including Other and secret answers
 - Host file browser, browser upload, and image attachment
-- Terminal through stable `command/exec`, with PTY streaming where supported
 - Apps/connectors and MCP status panels
 - Raw activity view for unknown notifications and item types
 - Installable PWA layout designed for an Android viewport
 
 ## Prerequisites
 
-- A current Codex CLI installed and signed in
-- An OpenSSH client on the gateway machine; SSH mode also requires key/agent
-  access and a signed-in Codex CLI on the remote server
+- A current Codex CLI installed and signed in for Codex task management
+- An OpenSSH client on the gateway machine and key/agent access for SSH mode
+- A remote Codex installation only when starting Codex on that server; the
+  direct SSH terminal itself only requires shell access
 - Rust 1.86 or later
 - Node.js 24 or a compatible current LTS release
 
@@ -89,10 +96,16 @@ codex app-server --listen ws://127.0.0.1:8765
 ```
 
 To work on another server, select **SSH 服务器** in Settings and enter an SSH
-Host alias or `user@host`. Pocket Agent uses the gateway machine's existing
-SSH agent, identity file, and `~/.ssh/config`; the browser never receives the
-private key. The remote app-server binds to `127.0.0.1` and its port does not
-need to be opened in the server firewall. See [SSH remote control](docs/SSH.md).
+Host alias or `user@host`. Open **Terminal** to create a direct remote shell,
+then run `codex` exactly as you would after a normal SSH login. The terminal is
+available even when managed remote app-server startup fails. Pocket Agent uses
+the gateway machine's existing SSH agent, identity file, and `~/.ssh/config`;
+the browser never receives the private key. See
+[SSH remote control](docs/SSH.md).
+
+The optional managed Codex path starts remote app-server and forwards its
+loopback WebSocket to `/ws`. That forwarded port stays private and does not need
+to be opened in the server firewall.
 
 If app-server is already managed elsewhere:
 
@@ -148,23 +161,24 @@ The schema regeneration scripts can check the local CLI after an upgrade:
 
 ## Security and current boundaries
 
-The token grants access to shell, filesystem, configuration, and MCP operations
-on the app-server host. Treat it like an SSH credential. Use a random token,
-WSS, a trusted reverse proxy or private tunnel, and a device you control. The
-subprotocol value is an encoding, not encryption, so reverse-proxy header logs
-must also redact `Sec-WebSocket-Protocol`.
+The token grants access to direct SSH terminals as well as shell, filesystem,
+configuration, and MCP operations on the app-server host. Treat it like an SSH
+credential. Use a random token, WSS, a trusted reverse proxy or private tunnel,
+and a device you control. The subprotocol value is an encoding, not encryption,
+so reverse-proxy header logs must also redact `Sec-WebSocket-Protocol`.
+
+Terminal output and live process handles are kept in memory and are not restored
+after a page reload. Only session names, working directories, and command history
+are persisted in browser storage.
 
 Conversation state is restored after a phone network switch by creating a new
 connection, repeating `initialize -> initialized`, then reading and resuming the
-active thread. A pending approval or PTY process belongs to the old upstream
-connection and may be cancelled when that connection drops; the persisted
-thread and completed items still recover.
+active thread. A pending approval belongs to the old upstream connection and may
+be cancelled when that connection drops; the persisted thread and completed
+items still recover. Direct SSH terminal sessions use separate WebSockets and do
+not depend on the app-server connection, but each terminal closes if its own
+socket, SSH process, or gateway stops.
 
 Codex app-server WebSocket transport remains experimental. Regenerate the
 bindings and rerun the full test suite whenever the installed Codex version
-changes.
-
-On Windows, app-server currently rejects streaming `command/exec` inside its
-safe sandbox. Pocket Agent therefore uses buffered execution for `read-only`
-and `workspace-write`; Unix and explicitly selected `danger-full-access` keep
-the interactive PTY path.
+changes. The direct SSH terminal does not use app-server `command/exec`.
