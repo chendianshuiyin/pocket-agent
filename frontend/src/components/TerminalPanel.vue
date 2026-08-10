@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ChevronDown,
   CircleStop,
@@ -10,21 +10,26 @@ import {
   Plus,
   RadioTower,
   Send,
+  Server,
   X,
 } from '@lucide/vue'
 import type { TerminalLine } from '../protocol/types'
 import { MAX_TERMINAL_SESSIONS } from '../stores/terminalManager'
 import type { TerminalManagerState, TerminalSession } from '../stores/terminalManager'
 
-const props = defineProps<{ manager: TerminalManagerState; events: readonly TerminalLine[]; connected: boolean }>()
+const TerminalCanvas = defineAsyncComponent(() => import('./TerminalCanvas.vue'))
+
+const props = defineProps<{ manager: TerminalManagerState; events: readonly TerminalLine[]; remoteReady: boolean; remoteTarget: string }>()
 const emit = defineEmits<{
   add: []
   select: [sessionId: string]
   update: [sessionId: string, patch: Partial<Pick<TerminalSession, 'name' | 'command' | 'cwd'>>]
   close: [sessionId: string]
   clear: [sessionId: string]
+  open: [sessionId: string]
   run: [sessionId: string, command: string]
   write: [sessionId: string, value: string]
+  binary: [sessionId: string, value: string]
   resize: [sessionId: string, rows: number, cols: number]
   terminate: [sessionId: string]
 }>()
@@ -38,7 +43,7 @@ const stdin = ref('')
 const historyIndex = ref(-1)
 const expanded = ref<Record<string, boolean>>({})
 const active = computed(() => props.manager.sessions.find((session) => session.id === props.manager.activeSessionId) ?? props.manager.sessions[0]!)
-const runningCount = computed(() => props.manager.sessions.filter((session) => session.running).length)
+const runningCount = computed(() => props.manager.sessions.filter((session) => session.running || session.connecting).length)
 const recentEvents = computed(() => [...props.events].reverse())
 let resizeObserver: ResizeObserver | null = null
 
@@ -77,14 +82,14 @@ function select(sessionId: string): void {
 }
 
 function run(): void {
-  if (!command.value.trim()) return
   historyIndex.value = -1
-  emit('run', active.value.id, command.value)
+  if (command.value.trim()) emit('run', active.value.id, command.value)
+  else emit('open', active.value.id)
 }
 
 function write(): void {
   if (!stdin.value) return
-  emit('write', active.value.id, stdin.value)
+  emit('write', active.value.id, `${stdin.value}\r`)
   stdin.value = ''
 }
 
@@ -101,10 +106,15 @@ function cycleHistory(direction: 1 | -1): void {
 }
 
 function statusLabel(session: TerminalSession): string {
-  if (session.running) return session.interactive ? 'PTY 运行中' : '执行中'
+  if (session.connecting) return '正在连接 SSH'
+  if (session.running) return '远端 PTY 在线'
   if (session.stale) return '连接已失效'
   if (session.exitCode !== null) return `exit ${session.exitCode}`
   return '就绪'
+}
+
+function sendControl(value: string): void {
+  emit('write', active.value.id, value)
 }
 </script>
 
@@ -127,13 +137,13 @@ function statusLabel(session: TerminalSession): string {
         <div class="terminal-tabs" role="tablist" aria-label="终端会话">
           <div v-for="session in manager.sessions" :key="session.id" class="terminal-tab" :class="{ active: session.id === active.id }">
             <button class="terminal-tab-main" role="tab" :aria-selected="session.id === active.id" @click="select(session.id)">
-              <i :class="{ running: session.running, stale: session.stale, failed: session.exitCode !== null && session.exitCode !== 0 }" />
+              <i :class="{ running: session.running || session.connecting, stale: session.stale, failed: session.exitCode !== null && session.exitCode !== 0 }" />
               <span>{{ session.name }}</span>
               <LoaderCircle v-if="session.running" :size="12" class="spin" />
             </button>
             <button
               class="terminal-tab-close"
-              :disabled="session.running || manager.sessions.length === 1"
+              :disabled="session.running || session.connecting || manager.sessions.length === 1"
               :aria-label="`关闭 ${session.name}`"
               @click="emit('close', session.id)"
             ><X :size="12" /></button>
@@ -156,21 +166,32 @@ function statusLabel(session: TerminalSession): string {
         </label>
       </div>
 
+      <div v-if="!remoteReady" class="terminal-remote-warning">
+        <Server :size="17" />
+        <span><b>尚未连接 SSH 服务器</b><small>在连接设置中选择“SSH 服务器”，终端会直接渲染远端 PTY。</small></span>
+      </div>
+
       <form class="command-launcher" @submit.prevent="run">
         <span class="prompt-mark">›_</span>
         <input
           v-model="command"
-          :disabled="!connected || active.running"
-          placeholder="输入 PowerShell / shell 命令"
+          :disabled="!remoteReady || active.connecting"
+          :placeholder="active.running ? '快捷发送命令到远端 shell' : '可选：连接后立即执行命令'"
           autocomplete="off"
           @change="saveMetadata"
           @keydown.up.prevent="cycleHistory(-1)"
           @keydown.down.prevent="cycleHistory(1)"
         />
-        <button v-if="!active.running" class="run-button" :disabled="!connected || !command.trim()" aria-label="运行命令">
+        <button v-if="!active.running && !active.connecting" class="run-button" :disabled="!remoteReady" :aria-label="command.trim() ? '连接并运行命令' : '连接远端终端'">
           <CornerDownLeft :size="18" />
         </button>
-        <button v-else type="button" class="run-button danger" aria-label="终止命令" @click="emit('terminate', active.id)">
+        <button v-else-if="active.connecting" type="button" class="run-button danger" aria-label="取消连接" @click="emit('terminate', active.id)">
+          <LoaderCircle :size="18" class="spin" />
+        </button>
+        <button v-else-if="command.trim()" class="run-button" aria-label="发送快捷命令">
+          <Send :size="17" />
+        </button>
+        <button v-else type="button" class="run-button danger" aria-label="关闭远端终端" @click="emit('terminate', active.id)">
           <CircleStop :size="18" />
         </button>
       </form>
@@ -180,14 +201,27 @@ function statusLabel(session: TerminalSession): string {
         <button v-for="item in active.commandHistory.slice(0, 4)" :key="item" :title="item" @click="command = item">{{ item }}</button>
       </div>
 
-      <div class="live-terminal" :class="{ stale: active.stale }">
+      <div class="live-terminal ssh-live-terminal" :class="{ stale: active.stale }">
         <div class="terminal-title">
           <i /><i /><i />
-          <span>{{ active.processId || active.name }} · {{ statusLabel(active) }}</span>
-          <LoaderCircle v-if="active.running" :size="14" class="spin" />
+          <span>{{ remoteTarget || 'SSH remote' }} · {{ active.name }} · {{ statusLabel(active) }}</span>
+          <LoaderCircle v-if="active.running || active.connecting" :size="14" class="spin" />
           <button aria-label="清空输出" title="清空输出" @click="emit('clear', active.id)"><Eraser :size="14" /></button>
         </div>
-        <pre ref="output">{{ active.output || (active.running ? '正在启动…' : '运行命令后，输出会保留在当前会话中。') }}</pre>
+        <div ref="output" class="xterm-stack">
+          <TerminalCanvas
+            v-for="session in manager.sessions"
+            v-show="session.id === active.id"
+            :key="session.id"
+            :output="session.output"
+            :active="session.id === active.id"
+            :connected="session.running"
+            @input="emit('write', session.id, $event)"
+            @binary="emit('binary', session.id, $event)"
+            @resize="(rows, cols) => emit('resize', session.id, rows, cols)"
+          />
+          <span v-if="!active.output && !active.running" class="terminal-canvas-placeholder">{{ active.connecting ? '正在建立 SSH PTY…' : '点击连接按钮，或直接输入命令后执行。' }}</span>
+        </div>
         <footer>
           <span>{{ active.cwd || 'server cwd' }}</span>
           <span v-if="active.error" class="error-text">{{ active.error }}</span>
@@ -200,7 +234,14 @@ function statusLabel(session: TerminalSession): string {
         <input v-model="stdin" :disabled="!active.running || !active.interactive" placeholder="向当前 PTY 写入 stdin" />
         <button :disabled="!active.running || !active.interactive || !stdin" aria-label="发送 stdin"><Send :size="16" /></button>
       </form>
-      <p class="panel-note">每个标签独立运行并按 <code>processId</code> 路由输出；可同时保留最多 {{ MAX_TERMINAL_SESSIONS }} 个会话。会话元数据与命令历史会保存，终端输出不会写入浏览器存储。</p>
+      <div class="terminal-control-keys" aria-label="终端控制键">
+        <button :disabled="!active.running" @click="sendControl('\u0003')">Ctrl+C</button>
+        <button :disabled="!active.running" @click="sendControl('\u001b')">Esc</button>
+        <button :disabled="!active.running" @click="sendControl('\t')">Tab</button>
+        <button :disabled="!active.running" @click="sendControl('\u001b[A')">↑</button>
+        <button :disabled="!active.running" @click="sendControl('\u001b[B')">↓</button>
+      </div>
+      <p class="panel-note">这是 Gateway 直接托管的 SSH PTY，不经过 Codex <code>command/exec</code>。可在终端中直接运行 <code>codex</code>、使用全屏 TUI 和交互命令；每个标签是一条独立 SSH 会话。</p>
     </template>
 
     <div v-else class="event-stream">

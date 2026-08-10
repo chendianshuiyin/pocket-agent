@@ -2,6 +2,7 @@ import { computed, reactive, readonly } from 'vue'
 import type { SlashCommandName } from '../commands/slashCommands'
 import { configureGatewayConnection } from '../gateway/SshGatewayClient'
 import type { GatewayMode, GatewaySshStatus } from '../gateway/SshGatewayClient'
+import { SshTerminalClient } from '../gateway/SshTerminalClient'
 import type { ConnectionSnapshot } from '../rpc/JsonRpcClient'
 import { JsonRpcClient } from '../rpc/JsonRpcClient'
 import { asRecord, isRecord, stringField } from '../protocol/guards'
@@ -23,14 +24,13 @@ import type {
   UnknownRecord,
   UserInput,
 } from '../protocol/types'
-import { decodeBase64Utf8, encodeUtf8Base64, fileToBase64 } from '../utils/encoding'
+import { fileToBase64 } from '../utils/encoding'
 import { basename, isImagePath, joinPath, parentPath } from '../utils/paths'
 import {
   MAX_TERMINAL_SESSIONS,
   appendTerminalOutput,
   createTerminalSession,
   loadTerminalManager,
-  markRunningTerminalsDisconnected,
   persistTerminalManager,
   rememberTerminalCommand,
 } from './terminalManager'
@@ -186,6 +186,7 @@ const state = reactive<SessionState>({
 })
 
 let client: JsonRpcClient | null = null
+const terminalClients = new Map<string, SshTerminalClient>()
 let initialized = false
 let openThreadGeneration = 0
 const TOKEN_REQUIRED_MESSAGE = '请先在连接设置中填写访问 Token'
@@ -202,8 +203,6 @@ function createClient(): JsonRpcClient {
     state.connection = { ...connection }
     if (leftReadyState) {
       state.pendingRequests.splice(0)
-      markRunningTerminalsDisconnected(state.terminals)
-      saveTerminalMetadata()
     }
   })
   rpc.onNotification(handleNotification)
@@ -295,7 +294,9 @@ async function saveSettings(next: SettingsState): Promise<void> {
     stopForMissingToken()
     return
   }
-  state.settingsOpen = !(await reconnect())
+  const connected = await reconnect()
+  const directSshTerminalAvailable = next.connectionMode === 'ssh' && !!next.sshTarget.trim()
+  state.settingsOpen = !connected && !directSshTerminalAvailable
 }
 
 async function prepareGatewayConnection(): Promise<void> {
@@ -597,7 +598,7 @@ function updateTerminal(sessionId: string, patch: Partial<Pick<TerminalSession, 
 
 function closeTerminal(sessionId: string): void {
   const session = findTerminal(sessionId)
-  if (!session || session.running || state.terminals.sessions.length === 1) return
+  if (!session || session.running || session.connecting || state.terminals.sessions.length === 1) return
   const index = state.terminals.sessions.indexOf(session)
   state.terminals.sessions.splice(index, 1)
   if (state.terminals.activeSessionId === sessionId) {
@@ -612,24 +613,64 @@ function clearTerminal(sessionId: string): void {
   Object.assign(session, { output: '', exitCode: null, error: null, stale: false })
 }
 
-async function runTerminal(sessionId = state.terminals.activeSessionId, command?: string): Promise<void> {
+function openTerminal(sessionId = state.terminals.activeSessionId, initialCommand = ''): void {
   const session = findTerminal(sessionId)
-  const nextCommand = command ?? session?.command ?? ''
-  if (!session || !nextCommand.trim() || session.running) return
-  const processId = `pocket-${makeId()}`
-  const isWindows = state.connection.server?.platformFamily === 'windows' || state.connection.server?.platformOs === 'windows'
-  const streamOutput = terminalSupportsStreaming(isWindows, state.settings.sandbox)
-  const argv = isWindows
-    ? ['powershell.exe', '-NoLogo', '-NoProfile', '-Command', nextCommand]
-    : ['/bin/sh', '-lc', nextCommand]
-  const cwd = session.cwd || state.settings.cwd
-  const sandboxPolicy = terminalSandboxPolicy(state.settings.sandbox, cwd)
-  rememberTerminalCommand(session, nextCommand)
+  if (!session || session.running || session.connecting) return
+  if (state.settings.connectionMode !== 'ssh' || !state.settings.sshTarget.trim()) {
+    session.error = '请先在连接设置中填写 SSH 服务器'
+    return
+  }
+  terminalClients.get(sessionId)?.close()
+  const terminal = new SshTerminalClient(
+    state.settings.endpoint,
+    state.settings.token,
+    {
+      sessionId,
+      target: state.settings.sshTarget.trim(),
+      port: state.settings.sshPort.trim() ? Number(state.settings.sshPort) : null,
+      identityFile: state.settings.sshIdentityFile.trim() || null,
+      cwd: session.cwd || state.settings.cwd,
+      rows: session.rows,
+      cols: session.cols,
+    },
+    {
+      onReady: () => {
+        if (terminalClients.get(sessionId) !== terminal) return
+        Object.assign(session, { connecting: false, running: true, interactive: true, stale: false, processId: sessionId, error: null })
+        if (initialCommand) terminal.sendInput(`${initialCommand}\r`)
+        saveTerminalMetadata()
+      },
+      onOutput: (data) => appendTerminalOutput(session, data),
+      onExit: (exitCode) => {
+        Object.assign(session, { connecting: false, running: false, interactive: false, exitCode, completedAt: Date.now() })
+        saveTerminalMetadata()
+      },
+      onError: (message) => {
+        session.error = message
+      },
+      onClose: (intentional) => {
+        if (terminalClients.get(sessionId) !== terminal) return
+        terminalClients.delete(sessionId)
+        const unexpectedlyClosed = (session.running || session.connecting) && !intentional
+        Object.assign(session, {
+          connecting: false,
+          running: false,
+          interactive: false,
+          processId: null,
+          stale: unexpectedlyClosed,
+          completedAt: session.completedAt ?? Date.now(),
+        })
+        if (unexpectedlyClosed && !session.error) session.error = 'SSH terminal 连接已断开'
+        saveTerminalMetadata()
+      },
+    },
+  )
+  terminalClients.set(sessionId, terminal)
   Object.assign(session, {
-    command: nextCommand,
-    processId,
-    interactive: streamOutput,
-    running: true,
+    processId: sessionId,
+    connecting: true,
+    interactive: false,
+    running: false,
     stale: false,
     output: '',
     exitCode: null,
@@ -638,81 +679,46 @@ async function runTerminal(sessionId = state.terminals.activeSessionId, command?
     completedAt: null,
   })
   saveTerminalMetadata()
-  appendEvent('command/exec', nextCommand, { processId, cwd, sandboxPolicy }, 'info', 'out')
-  try {
-    if (!streamOutput) appendEvent('command/exec', 'Windows sandbox 使用 buffered terminal；stdin/terminate 仅在 PTY 模式可用', undefined, 'warn')
-    const response = await ensureClient().call('command/exec', streamOutput
-      ? {
-          command: argv,
-          processId,
-          tty: true,
-          streamStdin: true,
-          streamStdoutStderr: true,
-          cwd: cwd || null,
-          disableTimeout: true,
-          size: { rows: session.rows, cols: session.cols },
-          sandboxPolicy,
-        }
-      : {
-          command: argv,
-          processId,
-          cwd: cwd || null,
-          timeoutMs: 120_000,
-          sandboxPolicy,
-        }, { timeoutMs: streamOutput ? null : 135_000 })
-    if (session.processId !== processId) return
-    if (response.stdout) appendTerminalOutput(session, response.stdout)
-    if (response.stderr) appendTerminalOutput(session, response.stderr)
-    session.exitCode = response.exitCode
-  } catch (error) {
-    if (session.processId === processId) session.error = errorMessage(error)
-  } finally {
-    if (session.processId === processId) {
-      session.running = false
-      session.interactive = false
-      session.completedAt = Date.now()
-      saveTerminalMetadata()
-    }
-  }
+  appendEvent('terminal/ssh/open', `打开 SSH terminal ${session.name}`, { sessionId, cwd: session.cwd || state.settings.cwd }, 'info', 'out')
+  terminal.connect()
 }
 
-async function writeTerminal(sessionId = state.terminals.activeSessionId, value?: string, closeStdin = false): Promise<void> {
+function runTerminal(sessionId = state.terminals.activeSessionId, command?: string): void {
+  const session = findTerminal(sessionId)
+  const nextCommand = command ?? session?.command ?? ''
+  if (!session || !nextCommand.trim()) return
+  session.command = nextCommand
+  rememberTerminalCommand(session, nextCommand)
+  saveTerminalMetadata()
+  if (session.running) terminalClients.get(sessionId)?.sendInput(`${nextCommand}\r`)
+  else openTerminal(sessionId, nextCommand)
+}
+
+function writeTerminal(sessionId = state.terminals.activeSessionId, value?: string): void {
   const session = findTerminal(sessionId)
   const nextValue = value ?? session?.stdin ?? ''
-  if (!session?.processId || !session.interactive || (!nextValue && !closeStdin)) return
-  try {
-    await ensureClient().call('command/exec/write', {
-      processId: session.processId,
-      ...(nextValue ? { deltaBase64: encodeUtf8Base64(`${nextValue}\n`) } : {}),
-      closeStdin,
-    })
-    session.stdin = ''
-  } catch (error) {
-    session.error = errorMessage(error)
-  }
+  if (!session?.running || !nextValue) return
+  terminalClients.get(sessionId)?.sendInput(nextValue)
+  session.stdin = ''
 }
 
-async function resizeTerminal(sessionId: string, rows: number, cols: number): Promise<void> {
+function writeTerminalBinary(sessionId: string, value: string): void {
+  if (!findTerminal(sessionId)?.running || !value) return
+  terminalClients.get(sessionId)?.sendBinary(value)
+}
+
+function resizeTerminal(sessionId: string, rows: number, cols: number): void {
   const session = findTerminal(sessionId)
   const size = { rows: Math.max(4, Math.min(200, Math.round(rows))), cols: Math.max(20, Math.min(400, Math.round(cols))) }
   if (!session || (session.rows === size.rows && session.cols === size.cols)) return
   Object.assign(session, size)
-  if (!session.processId || !session.running || !session.interactive) return
-  try {
-    await ensureClient().call('command/exec/resize', { processId: session.processId, size })
-  } catch (error) {
-    session.error = errorMessage(error)
-  }
+  terminalClients.get(sessionId)?.resize(size.rows, size.cols)
 }
 
-async function terminateTerminal(sessionId = state.terminals.activeSessionId): Promise<void> {
+function terminateTerminal(sessionId = state.terminals.activeSessionId): void {
   const session = findTerminal(sessionId)
-  if (!session?.processId || !session.running) return
-  try {
-    await ensureClient().call('command/exec/terminate', { processId: session.processId })
-  } catch (error) {
-    session.error = errorMessage(error)
-  }
+  if (!session || (!session.running && !session.connecting)) return
+  terminalClients.get(sessionId)?.close()
 }
 
 async function refreshIntegrations(forceRefetch = false): Promise<void> {
@@ -938,16 +944,6 @@ function handleNotification(notification: RpcNotification): void {
         plan: Array.isArray(params.plan) ? params.plan.filter(isRecord) : [],
       }
       return
-    case 'command/exec/outputDelta': {
-      const session = state.terminals.sessions.find((candidate) => candidate.processId === stringField(params, 'processId'))
-      if (!session) return
-      try {
-        appendTerminalOutput(session, decodeBase64Utf8(stringField(params, 'deltaBase64')))
-      } catch {
-        appendTerminalOutput(session, '[无法解码的输出]')
-      }
-      return
-    }
     case 'error':
     case 'warning':
     case 'configWarning':
@@ -1103,8 +1099,10 @@ export function useCodexSession() {
     updateTerminal,
     closeTerminal,
     clearTerminal,
+    openTerminal,
     runTerminal,
     writeTerminal,
+    writeTerminalBinary,
     resizeTerminal,
     terminateTerminal,
     refreshIntegrations,
@@ -1119,6 +1117,8 @@ export function useCodexSession() {
 export function __resetSessionForTests(): void {
   client?.destroy()
   client = null
+  for (const terminal of terminalClients.values()) terminal.close()
+  terminalClients.clear()
   initialized = false
   openThreadGeneration = 0
 }

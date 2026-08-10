@@ -11,6 +11,7 @@ export interface TerminalSession {
   cwd: string
   stdin: string
   processId: string | null
+  connecting: boolean
   interactive: boolean
   running: boolean
   stale: boolean
@@ -57,6 +58,7 @@ export function createTerminalSession(id: string, index: number, cwd = ''): Term
     cwd,
     stdin: '',
     processId: null,
+    connecting: false,
     interactive: false,
     running: false,
     stale: false,
@@ -118,7 +120,7 @@ export function persistTerminalManager(manager: TerminalManagerState, storage: T
       command: session.command,
       commandHistory: session.commandHistory.slice(0, MAX_TERMINAL_HISTORY),
       cwd: session.cwd,
-      wasRunning: session.running,
+      wasRunning: session.running || session.connecting,
       exitCode: session.exitCode,
       startedAt: session.startedAt,
       completedAt: session.completedAt,
@@ -152,6 +154,7 @@ export function markRunningTerminalsDisconnected(manager: TerminalManagerState, 
     if (!session.running) continue
     Object.assign(session, {
       processId: null,
+      connecting: false,
       interactive: false,
       running: false,
       stale: true,
