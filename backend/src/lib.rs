@@ -3,6 +3,7 @@ pub mod auth;
 pub mod config;
 pub mod proxy;
 pub mod ssh;
+pub mod ssh_terminal;
 
 use std::sync::Arc;
 
@@ -32,6 +33,7 @@ pub struct AppState {
     pub ssh_session: Arc<Mutex<Option<ssh::SshSession>>>,
     pub upstream: Arc<RwLock<UpstreamTarget>>,
     shutdown: watch::Sender<bool>,
+    ssh_terminal_generation: watch::Sender<u64>,
 }
 
 #[derive(Clone)]
@@ -44,6 +46,7 @@ pub struct UpstreamTarget {
 impl AppState {
     pub fn new(config: Config) -> Self {
         let (shutdown, _) = watch::channel(false);
+        let (ssh_terminal_generation, _) = watch::channel(0);
         let upstream = UpstreamTarget {
             url: config.codex_url.clone(),
             socket_addr: config.codex_socket_addr,
@@ -55,6 +58,7 @@ impl AppState {
             ssh_session: Arc::new(Mutex::new(None)),
             upstream: Arc::new(RwLock::new(upstream)),
             shutdown,
+            ssh_terminal_generation,
         }
     }
 
@@ -64,6 +68,15 @@ impl AppState {
 
     pub(crate) fn subscribe_shutdown(&self) -> watch::Receiver<bool> {
         self.shutdown.subscribe()
+    }
+
+    pub(crate) fn subscribe_ssh_terminal_generation(&self) -> watch::Receiver<u64> {
+        self.ssh_terminal_generation.subscribe()
+    }
+
+    pub(crate) fn reset_ssh_terminals(&self) {
+        self.ssh_terminal_generation
+            .send_modify(|generation| *generation += 1);
     }
 
     pub fn local_upstream(&self) -> UpstreamTarget {
@@ -90,6 +103,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ready", get(ready))
         .route("/readyz", get(ready))
         .route("/ws", get(proxy::websocket_handler))
+        .route("/terminal/ws", get(ssh_terminal::websocket_handler))
         .route("/api/ssh/connect", post(ssh::connect_handler))
         .route("/api/ssh/disconnect", post(ssh::disconnect_handler))
         .route("/api/ssh/status", get(ssh::status_handler))

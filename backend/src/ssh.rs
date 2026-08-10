@@ -55,9 +55,16 @@ pub struct SshStatus {
 pub struct SshSession {
     child: Child,
     stderr_task: JoinHandle<()>,
-    target: String,
+    connection: SshTerminalTarget,
     local_addr: SocketAddr,
     remote_port: u16,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SshTerminalTarget {
+    pub target: String,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
 }
 
 impl SshSession {
@@ -65,7 +72,7 @@ impl SshSession {
         SshStatus {
             mode: "ssh",
             connected: true,
-            target: Some(self.target.clone()),
+            target: Some(self.connection.target.clone()),
             local_port: Some(self.local_addr.port()),
             remote_port: Some(self.remote_port),
         }
@@ -78,7 +85,7 @@ impl SshSession {
                 if let Err(error) = self.child.kill().await {
                     warn!(%error, "failed to stop managed SSH session");
                 } else {
-                    info!(target = %self.target, "managed SSH session stopped");
+                    info!(target = %self.connection.target, "managed SSH session stopped");
                 }
             }
             Err(error) => warn!(%error, "failed to inspect managed SSH session"),
@@ -208,7 +215,11 @@ async fn start_session(
             let session = SshSession {
                 child,
                 stderr_task,
-                target: request.target,
+                connection: SshTerminalTarget {
+                    target: request.target,
+                    port: request.port,
+                    identity_file: request.identity_file,
+                },
                 local_addr,
                 remote_port,
             };
@@ -218,6 +229,7 @@ async fn start_session(
                 socket_addr: local_addr,
                 mode: "ssh",
             };
+            state.reset_ssh_terminals();
             let previous = state.ssh_session.lock().await.replace(session);
             *state.upstream.write().await = upstream;
             if let Some(previous) = previous {
@@ -366,6 +378,15 @@ async fn current_status(state: &AppState) -> SshStatus {
     }
 }
 
+pub(crate) async fn terminal_target(state: &AppState) -> Option<SshTerminalTarget> {
+    state
+        .ssh_session
+        .lock()
+        .await
+        .as_ref()
+        .map(|session| session.connection.clone())
+}
+
 fn local_status() -> SshStatus {
     SshStatus {
         mode: "local",
@@ -377,6 +398,7 @@ fn local_status() -> SshStatus {
 }
 
 pub async fn stop_managed_ssh(state: &AppState) {
+    state.reset_ssh_terminals();
     if let Some(session) = state.ssh_session.lock().await.take() {
         *state.upstream.write().await = state.local_upstream();
         session.stop().await;

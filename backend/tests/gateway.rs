@@ -185,6 +185,33 @@ async fn websocket_requires_a_valid_token() {
 }
 
 #[tokio::test]
+async fn ssh_terminal_websocket_requires_auth_and_an_active_ssh_connection() {
+    let servers = start_servers().await;
+    let unauthorized = connect_async(format!("ws://{}/terminal/ws", servers.gateway_addr))
+        .await
+        .unwrap_err();
+    match unauthorized {
+        tokio_tungstenite::tungstenite::Error::Http(response) => {
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        other => panic!("expected an HTTP authentication error, got {other}"),
+    }
+
+    let missing_ssh = connect_async(format!(
+        "ws://{}/terminal/ws?token=test-secret",
+        servers.gateway_addr
+    ))
+    .await
+    .unwrap_err();
+    match missing_ssh {
+        tokio_tungstenite::tungstenite::Error::Http(response) => {
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+        }
+        other => panic!("expected an active SSH connection error, got {other}"),
+    }
+}
+
+#[tokio::test]
 async fn websocket_relays_text_and_binary_without_interpreting_them() {
     let servers = start_servers().await;
     let mut request = format!("ws://{}/ws", servers.gateway_addr)
