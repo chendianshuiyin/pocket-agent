@@ -25,6 +25,16 @@ import type {
 } from '../protocol/types'
 import { decodeBase64Utf8, encodeUtf8Base64, fileToBase64 } from '../utils/encoding'
 import { basename, isImagePath, joinPath, parentPath } from '../utils/paths'
+import {
+  MAX_TERMINAL_SESSIONS,
+  appendTerminalOutput,
+  createTerminalSession,
+  loadTerminalManager,
+  markRunningTerminalsDisconnected,
+  persistTerminalManager,
+  rememberTerminalCommand,
+} from './terminalManager'
+import type { TerminalManagerState, TerminalSession } from './terminalManager'
 
 type MainTab = 'chat' | 'threads' | 'files' | 'terminal' | 'apps'
 
@@ -70,17 +80,6 @@ export interface FileBrowserState {
   error: string | null
 }
 
-export interface ShellState {
-  command: string
-  stdin: string
-  processId: string | null
-  interactive: boolean
-  running: boolean
-  output: string
-  exitCode: number | null
-  error: string | null
-}
-
 interface SessionState {
   connection: ConnectionSnapshot
   settings: SettingsState
@@ -101,7 +100,7 @@ interface SessionState {
   turnPlans: Record<string, { explanation: string | null; plan: UnknownRecord[] }>
   attachments: UserInput[]
   files: FileBrowserState
-  shell: ShellState
+  terminals: TerminalManagerState
   apps: AppInfo[]
   mcpServers: McpServerStatus[]
   skills: SkillMetadata[]
@@ -154,9 +153,10 @@ function initialSettings(): SettingsState {
   }
 }
 
+const settings = initialSettings()
 const state = reactive<SessionState>({
   connection: fallbackConnection,
-  settings: initialSettings(),
+  settings,
   ssh: { mode: 'local', connected: false, connecting: false, error: null },
   models: [],
   threads: [],
@@ -174,7 +174,7 @@ const state = reactive<SessionState>({
   turnPlans: {},
   attachments: [],
   files: { path: '', entries: [], loading: false, uploading: false, error: null },
-  shell: { command: '', stdin: '', processId: null, interactive: false, running: false, output: '', exitCode: null, error: null },
+  terminals: loadTerminalManager(typeof localStorage === 'undefined' ? undefined : localStorage, settings.cwd, makeId),
   apps: [],
   mcpServers: [],
   skills: [],
@@ -200,7 +200,11 @@ function createClient(): JsonRpcClient {
   rpc.onState((connection) => {
     const leftReadyState = state.connection.phase === 'ready' && connection.phase !== 'ready'
     state.connection = { ...connection }
-    if (leftReadyState) state.pendingRequests.splice(0)
+    if (leftReadyState) {
+      state.pendingRequests.splice(0)
+      markRunningTerminalsDisconnected(state.terminals)
+      saveTerminalMetadata()
+    }
   })
   rpc.onNotification(handleNotification)
   rpc.onServerRequest(handleServerRequest)
@@ -560,17 +564,81 @@ async function uploadFiles(files: FileList | File[]): Promise<void> {
   }
 }
 
-async function runTerminal(command = state.shell.command): Promise<void> {
-  if (!command.trim() || state.shell.running) return
+function findTerminal(sessionId: string): TerminalSession | undefined {
+  return state.terminals.sessions.find((session) => session.id === sessionId)
+}
+
+function saveTerminalMetadata(): void {
+  persistTerminalManager(state.terminals, typeof localStorage === 'undefined' ? undefined : localStorage)
+}
+
+function addTerminal(): void {
+  if (state.terminals.sessions.length >= MAX_TERMINAL_SESSIONS) return
+  const session = createTerminalSession(makeId(), state.terminals.sessions.length + 1, state.settings.cwd)
+  state.terminals.sessions.push(session)
+  state.terminals.activeSessionId = session.id
+  saveTerminalMetadata()
+}
+
+function selectTerminal(sessionId: string): void {
+  if (!findTerminal(sessionId)) return
+  state.terminals.activeSessionId = sessionId
+  saveTerminalMetadata()
+}
+
+function updateTerminal(sessionId: string, patch: Partial<Pick<TerminalSession, 'name' | 'command' | 'cwd'>>): void {
+  const session = findTerminal(sessionId)
+  if (!session) return
+  if (typeof patch.name === 'string') session.name = patch.name.trim().slice(0, 40) || session.name
+  if (typeof patch.command === 'string') session.command = patch.command
+  if (typeof patch.cwd === 'string') session.cwd = patch.cwd
+  saveTerminalMetadata()
+}
+
+function closeTerminal(sessionId: string): void {
+  const session = findTerminal(sessionId)
+  if (!session || session.running || state.terminals.sessions.length === 1) return
+  const index = state.terminals.sessions.indexOf(session)
+  state.terminals.sessions.splice(index, 1)
+  if (state.terminals.activeSessionId === sessionId) {
+    state.terminals.activeSessionId = state.terminals.sessions[Math.min(index, state.terminals.sessions.length - 1)]!.id
+  }
+  saveTerminalMetadata()
+}
+
+function clearTerminal(sessionId: string): void {
+  const session = findTerminal(sessionId)
+  if (!session) return
+  Object.assign(session, { output: '', exitCode: null, error: null, stale: false })
+}
+
+async function runTerminal(sessionId = state.terminals.activeSessionId, command?: string): Promise<void> {
+  const session = findTerminal(sessionId)
+  const nextCommand = command ?? session?.command ?? ''
+  if (!session || !nextCommand.trim() || session.running) return
   const processId = `pocket-${makeId()}`
   const isWindows = state.connection.server?.platformFamily === 'windows' || state.connection.server?.platformOs === 'windows'
   const streamOutput = terminalSupportsStreaming(isWindows, state.settings.sandbox)
   const argv = isWindows
-    ? ['powershell.exe', '-NoLogo', '-NoProfile', '-Command', command]
-    : ['/bin/sh', '-lc', command]
-  const sandboxPolicy = terminalSandboxPolicy(state.settings.sandbox, state.settings.cwd)
-  Object.assign(state.shell, { processId, interactive: streamOutput, running: true, output: '', exitCode: null, error: null })
-  appendEvent('command/exec', command, { processId, cwd: state.settings.cwd, sandboxPolicy }, 'info', 'out')
+    ? ['powershell.exe', '-NoLogo', '-NoProfile', '-Command', nextCommand]
+    : ['/bin/sh', '-lc', nextCommand]
+  const cwd = session.cwd || state.settings.cwd
+  const sandboxPolicy = terminalSandboxPolicy(state.settings.sandbox, cwd)
+  rememberTerminalCommand(session, nextCommand)
+  Object.assign(session, {
+    command: nextCommand,
+    processId,
+    interactive: streamOutput,
+    running: true,
+    stale: false,
+    output: '',
+    exitCode: null,
+    error: null,
+    startedAt: Date.now(),
+    completedAt: null,
+  })
+  saveTerminalMetadata()
+  appendEvent('command/exec', nextCommand, { processId, cwd, sandboxPolicy }, 'info', 'out')
   try {
     if (!streamOutput) appendEvent('command/exec', 'Windows sandbox 使用 buffered terminal；stdin/terminate 仅在 PTY 模式可用', undefined, 'warn')
     const response = await ensureClient().call('command/exec', streamOutput
@@ -580,49 +648,70 @@ async function runTerminal(command = state.shell.command): Promise<void> {
           tty: true,
           streamStdin: true,
           streamStdoutStderr: true,
-          cwd: state.settings.cwd || null,
+          cwd: cwd || null,
           disableTimeout: true,
-          size: { rows: 28, cols: 100 },
+          size: { rows: session.rows, cols: session.cols },
           sandboxPolicy,
         }
       : {
           command: argv,
           processId,
-          cwd: state.settings.cwd || null,
+          cwd: cwd || null,
           timeoutMs: 120_000,
           sandboxPolicy,
         }, { timeoutMs: streamOutput ? null : 135_000 })
-    if (response.stdout) state.shell.output += response.stdout
-    if (response.stderr) state.shell.output += response.stderr
-    state.shell.exitCode = response.exitCode
+    if (session.processId !== processId) return
+    if (response.stdout) appendTerminalOutput(session, response.stdout)
+    if (response.stderr) appendTerminalOutput(session, response.stderr)
+    session.exitCode = response.exitCode
   } catch (error) {
-    state.shell.error = errorMessage(error)
+    if (session.processId === processId) session.error = errorMessage(error)
   } finally {
-    state.shell.running = false
-    state.shell.interactive = false
+    if (session.processId === processId) {
+      session.running = false
+      session.interactive = false
+      session.completedAt = Date.now()
+      saveTerminalMetadata()
+    }
   }
 }
 
-async function writeTerminal(value = state.shell.stdin, closeStdin = false): Promise<void> {
-  if (!state.shell.processId || !state.shell.interactive || (!value && !closeStdin)) return
+async function writeTerminal(sessionId = state.terminals.activeSessionId, value?: string, closeStdin = false): Promise<void> {
+  const session = findTerminal(sessionId)
+  const nextValue = value ?? session?.stdin ?? ''
+  if (!session?.processId || !session.interactive || (!nextValue && !closeStdin)) return
   try {
     await ensureClient().call('command/exec/write', {
-      processId: state.shell.processId,
-      ...(value ? { deltaBase64: encodeUtf8Base64(`${value}\n`) } : {}),
+      processId: session.processId,
+      ...(nextValue ? { deltaBase64: encodeUtf8Base64(`${nextValue}\n`) } : {}),
       closeStdin,
     })
-    state.shell.stdin = ''
+    session.stdin = ''
   } catch (error) {
-    state.shell.error = errorMessage(error)
+    session.error = errorMessage(error)
   }
 }
 
-async function terminateTerminal(): Promise<void> {
-  if (!state.shell.processId || !state.shell.running) return
+async function resizeTerminal(sessionId: string, rows: number, cols: number): Promise<void> {
+  const session = findTerminal(sessionId)
+  const size = { rows: Math.max(4, Math.min(200, Math.round(rows))), cols: Math.max(20, Math.min(400, Math.round(cols))) }
+  if (!session || (session.rows === size.rows && session.cols === size.cols)) return
+  Object.assign(session, size)
+  if (!session.processId || !session.running || !session.interactive) return
   try {
-    await ensureClient().call('command/exec/terminate', { processId: state.shell.processId })
+    await ensureClient().call('command/exec/resize', { processId: session.processId, size })
   } catch (error) {
-    state.shell.error = errorMessage(error)
+    session.error = errorMessage(error)
+  }
+}
+
+async function terminateTerminal(sessionId = state.terminals.activeSessionId): Promise<void> {
+  const session = findTerminal(sessionId)
+  if (!session?.processId || !session.running) return
+  try {
+    await ensureClient().call('command/exec/terminate', { processId: session.processId })
+  } catch (error) {
+    session.error = errorMessage(error)
   }
 }
 
@@ -850,11 +939,12 @@ function handleNotification(notification: RpcNotification): void {
       }
       return
     case 'command/exec/outputDelta': {
-      if (stringField(params, 'processId') !== state.shell.processId) return
+      const session = state.terminals.sessions.find((candidate) => candidate.processId === stringField(params, 'processId'))
+      if (!session) return
       try {
-        state.shell.output += decodeBase64Utf8(stringField(params, 'deltaBase64'))
+        appendTerminalOutput(session, decodeBase64Utf8(stringField(params, 'deltaBase64')))
       } catch {
-        state.shell.output += '[无法解码的输出]'
+        appendTerminalOutput(session, '[无法解码的输出]')
       }
       return
     }
@@ -1008,8 +1098,14 @@ export function useCodexSession() {
     openFileEntry,
     goParentDirectory,
     uploadFiles,
+    addTerminal,
+    selectTerminal,
+    updateTerminal,
+    closeTerminal,
+    clearTerminal,
     runTerminal,
     writeTerminal,
+    resizeTerminal,
     terminateTerminal,
     refreshIntegrations,
     refreshSkills,

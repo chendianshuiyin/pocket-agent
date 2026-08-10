@@ -173,11 +173,17 @@ watch(() => state.tab, (tab) => {
       />
       <TerminalPanel
         v-else-if="state.tab === 'terminal'"
-        :shell="mutableState.shell"
+        :manager="mutableState.terminals"
         :events="mutableState.terminalEvents"
         :connected="connected"
+        @add="session.addTerminal"
+        @select="session.selectTerminal"
+        @update="session.updateTerminal"
+        @close="session.closeTerminal"
+        @clear="session.clearTerminal"
         @run="session.runTerminal"
         @write="session.writeTerminal"
+        @resize="session.resizeTerminal"
         @terminate="session.terminateTerminal"
       />
       <AppsPanel
