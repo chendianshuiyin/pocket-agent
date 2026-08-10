@@ -201,6 +201,7 @@ export interface ClientMethodMap {
   'fs/writeFile': { params: { path: string; dataBase64: string }; result: UnknownRecord }
   'command/exec': { params: CommandExecParams; result: { exitCode: number; stdout: string; stderr: string } }
   'command/exec/write': { params: { processId: string; deltaBase64?: string | null; closeStdin?: boolean }; result: UnknownRecord }
+  'command/exec/resize': { params: { processId: string; size: { rows: number; cols: number } }; result: UnknownRecord }
   'command/exec/terminate': { params: { processId: string }; result: UnknownRecord }
 }
 
