@@ -185,7 +185,7 @@ async fn websocket_requires_a_valid_token() {
 }
 
 #[tokio::test]
-async fn ssh_terminal_websocket_requires_auth_and_an_active_ssh_connection() {
+async fn ssh_terminal_websocket_requires_auth_and_validates_the_start_message() {
     let servers = start_servers().await;
     let unauthorized = connect_async(format!("ws://{}/terminal/ws", servers.gateway_addr))
         .await
@@ -197,18 +197,20 @@ async fn ssh_terminal_websocket_requires_auth_and_an_active_ssh_connection() {
         other => panic!("expected an HTTP authentication error, got {other}"),
     }
 
-    let missing_ssh = connect_async(format!(
+    let (mut terminal, _) = connect_async(format!(
         "ws://{}/terminal/ws?token=test-secret",
         servers.gateway_addr
     ))
     .await
-    .unwrap_err();
-    match missing_ssh {
-        tokio_tungstenite::tungstenite::Error::Http(response) => {
-            assert_eq!(response.status(), StatusCode::CONFLICT);
-        }
-        other => panic!("expected an active SSH connection error, got {other}"),
-    }
+    .unwrap();
+    terminal
+        .send(Message::Text(
+            r#"{"type":"start","sessionId":"term-1","target":"-oBad","rows":24,"cols":80}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let message = terminal.next().await.unwrap().unwrap().into_text().unwrap();
+    assert!(message.contains("invalid terminal start message"));
 }
 
 #[tokio::test]

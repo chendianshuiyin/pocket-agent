@@ -378,15 +378,6 @@ async fn current_status(state: &AppState) -> SshStatus {
     }
 }
 
-pub(crate) async fn terminal_target(state: &AppState) -> Option<SshTerminalTarget> {
-    state
-        .ssh_session
-        .lock()
-        .await
-        .as_ref()
-        .map(|session| session.connection.clone())
-}
-
 fn local_status() -> SshStatus {
     SshStatus {
         mode: "local",

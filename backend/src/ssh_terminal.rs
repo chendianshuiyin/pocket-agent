@@ -20,10 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
-use crate::{
-    AppState, auth,
-    ssh::{self, SshTerminalTarget},
-};
+use crate::{AppState, auth, ssh::SshTerminalTarget};
 
 const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_INPUT_BYTES: usize = 64 * 1024;
@@ -42,6 +39,9 @@ pub struct AuthQuery {
 enum ClientMessage {
     Start {
         session_id: String,
+        target: String,
+        port: Option<u16>,
+        identity_file: Option<String>,
         cwd: Option<String>,
         rows: u16,
         cols: u16,
@@ -87,30 +87,22 @@ pub async fn websocket_handler(
     if !auth::authorized(&headers, query.token.as_deref(), &state.config.token) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    let Some(target) = ssh::terminal_target(&state).await else {
-        return (
-            StatusCode::CONFLICT,
-            "connect an SSH server before opening a remote terminal",
-        )
-            .into_response();
-    };
     let ssh_bin = state.config.ssh_bin.clone();
     let shutdown = state.subscribe_shutdown();
     let terminal_generation = state.subscribe_ssh_terminal_generation();
     match selected_protocol {
-        Some(protocol) => upgrade.protocols([protocol]).on_upgrade(move |socket| {
-            relay(socket, ssh_bin, target, shutdown, terminal_generation)
-        }),
-        None => upgrade.on_upgrade(move |socket| {
-            relay(socket, ssh_bin, target, shutdown, terminal_generation)
-        }),
+        Some(protocol) => upgrade
+            .protocols([protocol])
+            .on_upgrade(move |socket| relay(socket, ssh_bin, shutdown, terminal_generation)),
+        None => {
+            upgrade.on_upgrade(move |socket| relay(socket, ssh_bin, shutdown, terminal_generation))
+        }
     }
 }
 
 async fn relay(
     mut socket: WebSocket,
     ssh_bin: PathBuf,
-    target: SshTerminalTarget,
     mut shutdown: watch::Receiver<bool>,
     mut terminal_generation: watch::Receiver<u64>,
 ) {
@@ -127,17 +119,33 @@ async fn relay(
             return;
         }
     };
-    let (session_id, cwd, rows, cols) = match start {
+    let (session_id, target, cwd, rows, cols) = match start {
         Ok(ClientMessage::Start {
             session_id,
+            target,
+            port,
+            identity_file,
             cwd,
             rows,
             cols,
         }) if valid_session_id(&session_id)
+            && valid_target(&target)
+            && port != Some(0)
+            && valid_identity_file(identity_file.as_deref())
             && valid_size(rows, cols)
             && valid_cwd(cwd.as_deref()) =>
         {
-            (session_id, cwd, rows, cols)
+            (
+                session_id,
+                SshTerminalTarget {
+                    target,
+                    port,
+                    identity_file,
+                },
+                cwd,
+                rows,
+                cols,
+            )
         }
         _ => {
             send_server_message(
@@ -359,6 +367,20 @@ fn valid_session_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+fn valid_target(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !value.starts_with('-')
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'-' | b'_' | b'.' | b'@' | b':' | b'[' | b']')
+        })
+}
+
+fn valid_identity_file(value: Option<&str>) -> bool {
+    value.is_none_or(|path| path.len() <= 4096 && !path.contains('\0'))
+}
+
 fn valid_size(rows: u16, cols: u16) -> bool {
     (4..=200).contains(&rows) && (20..=400).contains(&cols)
 }
@@ -473,6 +495,10 @@ mod tests {
     fn validates_terminal_start_boundaries() {
         assert!(valid_session_id("term-a_1"));
         assert!(!valid_session_id("term/a"));
+        assert!(valid_target("deploy@prod-1"));
+        assert!(!valid_target("-oProxyCommand=bad"));
+        assert!(valid_identity_file(Some("/keys/id_ed25519")));
+        assert!(!valid_identity_file(Some("bad\0path")));
         assert!(valid_size(24, 80));
         assert!(!valid_size(1, 80));
         assert!(valid_cwd(Some("/srv/app")));
