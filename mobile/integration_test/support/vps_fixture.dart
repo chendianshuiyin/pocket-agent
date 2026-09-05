@@ -48,6 +48,20 @@ Future<void> pumpUntil(
   }
 }
 
+Future<void> tapWhenHitTestable(
+  WidgetTester tester,
+  Finder target, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final hitTarget = target.hitTestable();
+  await pumpUntil(
+    tester,
+    () => hitTarget.evaluate().isNotEmpty,
+    timeout: timeout,
+  );
+  await tester.tap(hitTarget);
+}
+
 String fixtureString(Map<String, Object?> fixture, String key) {
   final value = fixture[key];
   if (value is! String || value.isEmpty) {
@@ -73,7 +87,7 @@ Future<void> enterTerminalCommand(
   Finder terminal,
   String command,
 ) async {
-  await tester.tap(terminal);
+  await tapWhenHitTestable(tester, terminal);
   await pumpUntil(
     tester,
     () => tester.testTextInput.hasAnyClients,
