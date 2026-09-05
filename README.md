@@ -1,9 +1,27 @@
 # Pocket Agent
 
-Pocket Agent is an Android-first web control plane for Codex and remote servers.
-The browser talks to a small gateway, which can run `codex app-server`, manage a
-remote app-server over SSH, and open independent interactive SSH terminals. It
-is intentionally a remote work surface rather than a clone of the Codex UI.
+Pocket Agent 当前重点是个人使用的 Android / iOS App：直接 SSH 连接多台 Linux
+服务器，分别使用原生终端和 Codex app-server 任务管理。移动端代码位于
+[`mobile/`](mobile/README.md)，不依赖网关或公开的 app-server 端口。
+
+移动端仍在验证中，不能视为已上线产品。Android 已能构建和安装；真实模型任务
+验证仍需有效的远端 Codex 登录。iOS 没有 Mac/Xcode/真机验证环境。
+参见 [移动端验证记录](docs/MOBILE_VALIDATION.md)、
+[服务器准备与安全边界](docs/MOBILE_OPERATIONS.md)、
+[UI 与图标设计范围](docs/BRAND_DESIGN.md)。
+
+```sh
+cd mobile
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```
+
+## 既有 Web/PWA 版本（可选）
+
+以下章节记录保留的 Vue / Rust Web 版本。浏览器通过网关访问服务器；它与移动端
+是不同入口，下述旧版本功能和验证记录不代表移动端已通过同样的验证。
 
 ```text
 Android / desktop browser
