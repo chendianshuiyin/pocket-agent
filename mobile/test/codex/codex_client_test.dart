@@ -362,9 +362,11 @@ void main() {
     () async {
       var connectorCalls = 0;
       var rejectConnections = false;
+      final observedHeaders = <Map<String, String>>[];
       final exhausted = Completer<void>();
       Future<WebSocket> connector(Uri uri, Map<String, String> headers) {
         connectorCalls += 1;
+        observedHeaders.add(Map<String, String>.of(headers));
         if (rejectConnections) {
           if (connectorCalls >= 3 && !exhausted.isCompleted)
             exhausted.complete();
@@ -375,6 +377,9 @@ void main() {
 
       client = await CodexClient.connect(
         server.uri,
+        headers: const <String, String>{
+          HttpHeaders.authorizationHeader: 'Bearer transport-capability',
+        },
         socketConnector: connector,
         reconnectPolicy: const ReconnectPolicy(
           initialDelay: Duration(milliseconds: 5),
@@ -394,6 +399,12 @@ void main() {
       await client!.reconnect();
       expect(client!.state.phase, ConnectionPhase.ready);
       expect(connectorCalls, 4);
+      expect(
+        observedHeaders,
+        everyElement(<String, String>{
+          HttpHeaders.authorizationHeader: 'Bearer transport-capability',
+        }),
+      );
     },
   );
 

@@ -50,11 +50,24 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 
 凭据仅进入系统安全存储。Android 禁止自动备份及设备迁移；iOS Keychain 使用
 仅本设备且解锁时可访问的配置。不在源代码、构建参数或普通偏好中保存 SSH 密码。
-App 不保存远端 Codex token；使用远端 SSH 用户的 Codex 登录。
+App 不保存远端 Codex 账号 token；使用远端 SSH 用户的 Codex 登录。
 
 app-server 只监听 `127.0.0.1`，经 SSH 隧道使用。不要开放 4500 等配置端口到
-公网。服务器上能访问同一用户/回环服务的本地程序仍属于信任边界；该方案不是
-多租户隔离系统。
+公网。连接额外使用独立的 256-bit capability token，不能将回环地址本身当作
+认证。token 由远端安全随机源生成，保存在 SSH 用户拥有的
+`~/.pocket-agent/app-server-<port>.token`（目录 0700、文件 0600），通过已验证
+主机密钥的 SSH 读取。手机仅在内存保留连接所需的 Bearer header，不写入普通
+服务器配置、UI 或日志；该 token 与 Codex 账号登录凭据不同。
+
+远端以 `--ws-auth capability-token --ws-token-file <absolute-path>` 启动，
+命令行不携带 token 内容。重连沿用同一 runtime token；客户端检查缺失/错误
+token 的 WebSocket Upgrade 被明确拒绝，且正确 token 能握手，不能用
+`/readyz` 返回 200 代替认证验证。超时和网络错误不算认证拒绝。
+
+旧版无认证 runtime、权限不安全或内容无效的 token 会被拒绝复用，不自动杀掉
+或替换正在工作的 tmux 会话。迁移旧版前，先完成或中断其中的任务，再由用户
+显式停止对应旧 runtime 后重新连接；不要通过禁用认证或放宽权限绕过错误。
+服务器的 root 和同一 SSH 系统用户仍属于信任边界；这不是多租户隔离系统。
 
 官方仍将 WebSocket transport 标注为实验性，不应将个人验证结果解读为上游
 生产 SLA。协议版本固定、升级回归和真实断线测试是必要门槛。参见

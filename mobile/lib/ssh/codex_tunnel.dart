@@ -6,13 +6,19 @@ import 'package:dartssh2/dartssh2.dart';
 import 'ssh_connection.dart';
 
 class CodexTunnel {
-  CodexTunnel._(this._server, this._connection, this.remotePort) {
+  CodexTunnel._(
+    this._server,
+    this._connection,
+    this.remotePort,
+    this._capabilityToken,
+  ) {
     _serverSubscription = _server.listen(_accept);
   }
 
   final ServerSocket _server;
   final SshTransport _connection;
   final int remotePort;
+  final String? _capabilityToken;
   final Set<_TunnelPair> _pairs = {};
   late final StreamSubscription<Socket> _serverSubscription;
   bool _closed = false;
@@ -23,15 +29,29 @@ class CodexTunnel {
   bool get isClosed => _closed;
   String? get lastFailureType => _lastFailureType;
 
+  /// WebSocket app-server transport capability, not a Codex account credential.
+  Map<String, String> get clientHeaders {
+    final token = _capabilityToken;
+    if (token == null) return const <String, String>{};
+    return Map<String, String>.unmodifiable(<String, String>{
+      HttpHeaders.authorizationHeader: 'Bearer $token',
+    });
+  }
+
   static Future<CodexTunnel> open(
     SshTransport connection,
-    int remotePort,
-  ) async {
+    int remotePort, {
+    String? capabilityToken,
+  }) async {
     if (!connection.isConnected) {
       throw StateError('SSH connection is not connected');
     }
+    if (capabilityToken != null &&
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(capabilityToken)) {
+      throw ArgumentError('Invalid runtime capability token');
+    }
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    return CodexTunnel._(server, connection, remotePort);
+    return CodexTunnel._(server, connection, remotePort, capabilityToken);
   }
 
   void _accept(Socket local) {
@@ -74,6 +94,81 @@ class CodexTunnel {
     await Future.wait(pairs.map((pair) => pair.close()));
     _pairs.clear();
   }
+}
+
+Future<bool> verifyWebSocketCapabilityAuthentication(
+  Uri uri,
+  Map<String, String> authenticatedHeaders, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final authorization = authenticatedHeaders[HttpHeaders.authorizationHeader];
+  if (authorization == null || !authorization.startsWith('Bearer ')) {
+    return false;
+  }
+  if (!await _httpUpgradeAuthenticationRejected(uri, const {}, timeout)) {
+    return false;
+  }
+  if (!await _httpUpgradeAuthenticationRejected(uri, const {
+    HttpHeaders.authorizationHeader: 'Bearer invalid-capability-token',
+  }, timeout)) {
+    return false;
+  }
+
+  WebSocket? socket;
+  var timedOut = false;
+  final connection = WebSocket.connect(
+    uri.toString(),
+    headers: authenticatedHeaders,
+  );
+  connection.then<void>((lateSocket) {
+    if (timedOut) unawaited(_closeWebSocket(lateSocket, timeout));
+  }, onError: (Object _, StackTrace _) {});
+  try {
+    socket = await connection.timeout(
+      timeout,
+      onTimeout: () {
+        timedOut = true;
+        throw TimeoutException('WebSocket authentication timed out');
+      },
+    );
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    if (socket != null) await _closeWebSocket(socket, timeout);
+  }
+}
+
+Future<bool> _httpUpgradeAuthenticationRejected(
+  Uri uri,
+  Map<String, String> headers,
+  Duration timeout,
+) async {
+  final client = HttpClient()..connectionTimeout = timeout;
+  try {
+    final request = await client
+        .getUrl(uri.replace(scheme: uri.scheme == 'wss' ? 'https' : 'http'))
+        .timeout(timeout);
+    request.headers
+      ..set(HttpHeaders.connectionHeader, 'Upgrade')
+      ..set(HttpHeaders.upgradeHeader, 'websocket')
+      ..set('Sec-WebSocket-Version', '13')
+      ..set('Sec-WebSocket-Key', 'AAAAAAAAAAAAAAAAAAAAAA==');
+    headers.forEach(request.headers.set);
+    final response = await request.close().timeout(timeout);
+    return response.statusCode == HttpStatus.unauthorized ||
+        response.statusCode == HttpStatus.forbidden;
+  } catch (_) {
+    return false;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<void> _closeWebSocket(WebSocket socket, Duration timeout) async {
+  try {
+    await socket.close().timeout(timeout);
+  } catch (_) {}
 }
 
 class _TunnelPair {

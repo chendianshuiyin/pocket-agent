@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'codex_tunnel.dart';
 import 'shell_command.dart';
@@ -44,8 +43,11 @@ class RemoteRuntimeManager {
   late final Future<bool> Function()? _readinessProbe;
   late final Future<bool> Function()? _portListeningProbe;
   String? _lastProbeDiagnostic;
+  // Transport-only capability: keep it out of profiles, UI, and diagnostics.
+  String? _runtimeToken;
 
   String get _sessionName => 'pocket-agent-runtime-codex-$remotePort';
+  String get _tokenRelativePath => '.pocket-agent/app-server-$remotePort.token';
 
   Future<RemoteRuntimeStatus> inspect() async {
     _requireConnected();
@@ -64,7 +66,17 @@ class RemoteRuntimeManager {
       );
     }
 
-    final healthy = await _probeThroughNewTunnel();
+    final token = await _readRuntimeToken();
+    if (token == null) {
+      return RemoteRuntimeStatus(
+        running: false,
+        codexVersion: version,
+        remotePort: remotePort,
+        diagnostic: 'app-server runtime authentication is unavailable',
+      );
+    }
+    final healthy = await _probeThroughNewTunnel(token);
+    if (healthy) _runtimeToken = token;
     return RemoteRuntimeStatus(
       running: healthy,
       codexVersion: version,
@@ -81,7 +93,11 @@ class RemoteRuntimeManager {
       '-lc',
       'PATH="\$HOME/.local/bin:\$PATH"; export PATH; '
           'command -v codex >/dev/null 2>&1 && '
-          'command -v tmux >/dev/null 2>&1',
+          'command -v tmux >/dev/null 2>&1 && '
+          'command -v mktemp >/dev/null 2>&1 && '
+          'command -v od >/dev/null 2>&1 && '
+          'command -v stat >/dev/null 2>&1 && '
+          'command -v tr >/dev/null 2>&1',
     ]);
     if (!prerequisites.succeeded) {
       throw StateError(
@@ -96,7 +112,14 @@ class RemoteRuntimeManager {
       '=$_sessionName',
     ]);
     if (existing.succeeded) {
-      if (await _probeThroughNewTunnel()) {
+      final token = await _readRuntimeToken();
+      if (token == null) {
+        throw StateError(
+          'Existing remote Codex runtime is not authentication-managed',
+        );
+      }
+      if (await _probeThroughNewTunnel(token)) {
+        _runtimeToken = token;
         return RemoteRuntimeStatus(
           running: true,
           codexVersion: version,
@@ -112,14 +135,20 @@ class RemoteRuntimeManager {
         'Remote loopback port is already used by an unmanaged service',
       );
     }
+    final token = await _initializeRuntimeToken();
     final codexCommand = buildShellCommand('codex', [
       'app-server',
       '--listen',
       'ws://127.0.0.1:$remotePort',
+      '--ws-auth',
+      'capability-token',
+      '--ws-token-file',
     ]);
     final appServerCommand = buildShellCommand('sh', [
       '-lc',
-      'PATH="\$HOME/.local/bin:\$PATH"; export PATH; exec $codexCommand',
+      'PATH="\$HOME/.local/bin:\$PATH"; export PATH; '
+          'token_file="\$HOME/$_tokenRelativePath"; '
+          'exec $codexCommand "\$token_file"',
     ]);
     final start = await _runWithUserPath('tmux', [
       'new-session',
@@ -134,7 +163,8 @@ class RemoteRuntimeManager {
 
     final deadline = DateTime.now().add(startupTimeout);
     do {
-      if (await _probeThroughNewTunnel()) {
+      if (await _probeThroughNewTunnel(token)) {
+        _runtimeToken = token;
         return RemoteRuntimeStatus(
           running: true,
           codexVersion: version,
@@ -149,7 +179,23 @@ class RemoteRuntimeManager {
 
   Future<CodexTunnel> openTunnel() async {
     await ensureRunning();
-    return CodexTunnel.open(connection, remotePort);
+    return _openAuthenticatedTunnel();
+  }
+
+  Future<CodexTunnel> openExistingTunnel() async {
+    final status = await inspect();
+    if (!status.running) {
+      throw StateError('Existing remote Codex runtime is unavailable');
+    }
+    return _openAuthenticatedTunnel();
+  }
+
+  Future<CodexTunnel> _openAuthenticatedTunnel() {
+    final token = _runtimeToken;
+    if (token == null) {
+      throw StateError('Remote Codex runtime authentication is unavailable');
+    }
+    return CodexTunnel.open(connection, remotePort, capabilityToken: token);
   }
 
   Future<String?> _codexVersion() async {
@@ -159,28 +205,25 @@ class RemoteRuntimeManager {
     return value.isEmpty ? null : value;
   }
 
-  Future<bool> _probeThroughNewTunnel() async {
+  Future<bool> _probeThroughNewTunnel(String token) async {
     final override = _readinessProbe;
     if (override != null) return override();
     _lastProbeDiagnostic = null;
     CodexTunnel? tunnel;
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
     var stage = 'open-tunnel';
     try {
-      tunnel = await CodexTunnel.open(connection, remotePort);
-      stage = 'send-request';
-      final request = await client
-          .getUrl(tunnel.uri.replace(scheme: 'http', path: '/readyz'))
-          .timeout(const Duration(seconds: 2));
-      stage = 'read-response';
-      final response = await request.close().timeout(
-        const Duration(seconds: 2),
+      tunnel = await CodexTunnel.open(
+        connection,
+        remotePort,
+        capabilityToken: token,
       );
-      await response.drain<void>().timeout(const Duration(seconds: 2));
-      final healthy = response.statusCode >= 200 && response.statusCode < 300;
+      stage = 'verify-authentication';
+      final healthy = await verifyWebSocketCapabilityAuthentication(
+        tunnel.uri,
+        tunnel.clientHeaders,
+      );
       if (!healthy) {
-        _lastProbeDiagnostic =
-            'app-server readiness probe returned HTTP ${response.statusCode}';
+        _lastProbeDiagnostic = 'app-server WebSocket authentication failed';
       }
       return healthy;
     } catch (error) {
@@ -190,9 +233,86 @@ class RemoteRuntimeManager {
           '${tunnelFailure == null ? '' : ', tunnel $tunnelFailure'})';
       return false;
     } finally {
-      client.close(force: true);
       await tunnel?.close();
     }
+  }
+
+  Future<String?> _readRuntimeToken() async {
+    final result = await connection.executeCommand('sh', [
+      '-lc',
+      _tokenValidationScript(createIfMissing: false),
+    ]);
+    if (!result.succeeded) return null;
+    return _parseRuntimeToken(result.stdout);
+  }
+
+  Future<String> _initializeRuntimeToken() async {
+    final result = await connection.executeCommand('sh', [
+      '-lc',
+      _tokenValidationScript(createIfMissing: true),
+    ]);
+    final token = result.succeeded ? _parseRuntimeToken(result.stdout) : null;
+    if (token == null) {
+      throw StateError('Failed to initialize remote runtime authentication');
+    }
+    return token;
+  }
+
+  String _tokenValidationScript({required bool createIfMissing}) {
+    final initialize = createIfMissing
+        ? '''
+if [ ! -e "\$token_file" ]; then
+  temp="\$(umask 077; mktemp "\$token_file.tmp.XXXXXX")"
+  trap 'rm -f -- "\$temp"' EXIT HUP INT TERM
+  (umask 077; od -An -v -N32 -tx1 /dev/urandom | tr -d '[:space:]' > "\$temp")
+  [ ! -L "\$temp" ] && [ -f "\$temp" ] || exit 74
+  [ "\$(stat -c '%u' -- "\$temp")" = "\$uid" ] || exit 74
+  [ "\$(stat -c '%a' -- "\$temp")" = '600' ] || exit 74
+  candidate="\$(cat -- "\$temp")"
+  case "\$candidate" in *[!a-f0-9]*|'') exit 74;; esac
+  [ "\${#candidate}" -eq 64 ] || exit 74
+  unset candidate
+  if ! ln "\$temp" "\$token_file" 2>/dev/null; then
+    [ -e "\$token_file" ] || exit 74
+  fi
+  rm -f -- "\$temp"
+  trap - EXIT HUP INT TERM
+fi
+'''
+        : '';
+    return '''
+set -eu
+token_dir="\$HOME/.pocket-agent"
+token_file="\$HOME/$_tokenRelativePath"
+uid="\$(id -u)"
+if [ -L "\$token_dir" ] ||
+   { [ -e "\$token_dir" ] && [ ! -d "\$token_dir" ]; }; then
+  exit 73
+fi
+if [ ! -e "\$token_dir" ]; then
+  ${createIfMissing ? 'if ! mkdir -m 700 -- "\$token_dir" 2>/dev/null; then [ -d "\$token_dir" ] || exit 73; fi' : 'exit 73'}
+fi
+[ ! -L "\$token_dir" ] && [ -d "\$token_dir" ] || exit 73
+[ "\$(stat -c '%u' -- "\$token_dir")" = "\$uid" ] || exit 73
+[ "\$(stat -c '%a' -- "\$token_dir")" = '700' ] || exit 73
+$initialize
+[ ! -L "\$token_file" ] && [ -f "\$token_file" ] || exit 74
+exec 3< "\$token_file"
+[ -f /proc/self/fd/3 ] || exit 74
+[ "\$(stat -Lc '%u' -- /proc/self/fd/3)" = "\$uid" ] || exit 74
+[ "\$(stat -Lc '%a' -- /proc/self/fd/3)" = '600' ] || exit 74
+[ "\$(stat -Lc '%h' -- /proc/self/fd/3)" = '1' ] || exit 74
+token="\$(cat <&3)"
+exec 3<&-
+case "\$token" in *[!a-f0-9]*|'') exit 74;; esac
+[ "\${#token}" -eq 64 ] || exit 74
+printf '%s' "\$token"
+''';
+  }
+
+  String? _parseRuntimeToken(String output) {
+    final token = output.trim();
+    return RegExp(r'^[a-f0-9]{64}$').hasMatch(token) ? token : null;
   }
 
   Future<bool> _isRemotePortListening() async {

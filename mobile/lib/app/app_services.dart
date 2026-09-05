@@ -228,6 +228,7 @@ class _ProductionConnectedServer implements ConnectedServer {
     try {
       final client = await CodexClient.connect(
         tunnel.uri,
+        headers: tunnel.clientHeaders,
         reconnectPolicy: const ReconnectPolicy(maxAttempts: 3),
       );
       return _ProductionCodexPort(client, tunnel);
