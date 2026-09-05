@@ -30,17 +30,18 @@ Flutter 自绘材质不等同于原生 Apple Liquid Glass。
 仅借鉴角色头像式构图及绘画表现，不复制阿米娅或其他角色、阵营徽记、官方 logo。
 
 - `mobile/assets/brand/portrait-study.png`：用户认可的画风基准；身份辨识尚不足。
-- `mobile/assets/brand/agent-portrait-candidate.png`：带轻量耳侧通信模块的上一轮候选；
-  耳机方向已被用户否定，文件仅作为迭代历史保留，不再用于 launcher。
 - `mobile/assets/brand/agent-portrait-owl-v2.png`：当前 launcher 候选。采用原创银白发、
   琥珀眼和羽状发束，不带耳机；只借鉴白面鸮沉静、可靠的助手气质，不复制其角色设计。
   本轮接入用于继续评估，不代表用户已经定稿。
+
+上一轮曾尝试耳侧通信模块，但耳机方向已被用户明确否定；对应旧稿不再保留或用于
+launcher。下方 prompt 仅记录该设计决策，避免后续重复采用同一方向。
 
 本次只替换 Android/iOS launcher 资源，不改变应用界面、功能或既有 UI 方向。
 
 图片通过内置 image_gen 生成/编辑，无 CLI/API fallback。原始输出保留于 Codex
 generated_images，项目副本已保存于仓库。被否定的 Q 版/猫机器人草案不复制进项目；
-已接入过的耳机版只保留为可追溯的迭代历史。
+已接入过的耳机版仅以文字记录保留迭代历史。
 
 当前无耳机版的完整 prompt、生成方式和源文件校验见
 [无耳机头像 v2 生成记录](ICON_OWL_V2_PROMPT.md)。以下保留早期迭代记录。
