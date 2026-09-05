@@ -152,6 +152,117 @@ class WithoutCodexAuthTest(unittest.TestCase):
         ])
         self.assertEqual(command[-2:], ["--listen", "ws://127.0.0.1:4500"])
 
+    def test_runtime_ownership_rejects_empty_pane_list(self):
+        with patch.object(bridge, "checked", return_value=""):
+            with self.assertRaisesRegex(RuntimeError, "exactly one validated pane"):
+                bridge.require_owned_runtime(
+                    self.args,
+                    object(),
+                    self.remote_home,
+                    self.codex_home,
+                )
+
+    def test_runtime_ownership_rejects_multiple_panes(self):
+        commands = []
+
+        def fake_checked(_client, command):
+            commands.append(command)
+            return "%0\n%1"
+
+        with patch.object(bridge, "checked", side_effect=fake_checked):
+            with self.assertRaisesRegex(RuntimeError, "exactly one validated pane"):
+                bridge.require_owned_runtime(
+                    self.args,
+                    object(),
+                    self.remote_home,
+                    self.codex_home,
+                )
+
+        self.assertEqual(len(commands), 1)
+
+    def test_runtime_ownership_accepts_single_layer_command(self):
+        expected = bridge.runtime_argv(
+            self.args,
+            self.remote_home,
+            self.codex_home,
+        )
+        responses = iter(["%7", shlex.join(expected)])
+
+        with patch.object(
+            bridge,
+            "checked",
+            side_effect=lambda *_: next(responses),
+        ):
+            bridge.require_owned_runtime(
+                self.args,
+                object(),
+                self.remote_home,
+                self.codex_home,
+            )
+
+    def test_runtime_ownership_accepts_double_quoted_command(self):
+        expected = bridge.runtime_argv(
+            self.args,
+            self.remote_home,
+            self.codex_home,
+        )
+        responses = iter(["%12", shlex.quote(shlex.join(expected))])
+
+        with patch.object(
+            bridge,
+            "checked",
+            side_effect=lambda *_: next(responses),
+        ):
+            bridge.require_owned_runtime(
+                self.args,
+                object(),
+                self.remote_home,
+                self.codex_home,
+            )
+
+    def test_runtime_ownership_rejects_wrong_codex_home(self):
+        wrong = bridge.runtime_argv(
+            self.args,
+            self.remote_home,
+            self.codex_home + "-other",
+        )
+        responses = iter(["%2", shlex.join(wrong)])
+
+        with patch.object(
+            bridge,
+            "checked",
+            side_effect=lambda *_: next(responses),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not owned"):
+                bridge.require_owned_runtime(
+                    self.args,
+                    object(),
+                    self.remote_home,
+                    self.codex_home,
+                )
+
+    def test_runtime_ownership_rejects_wrong_mode(self):
+        authorized_args = SimpleNamespace(without_codex_auth=False)
+        wrong_mode = bridge.runtime_argv(
+            authorized_args,
+            self.remote_home,
+            self.codex_home,
+        )
+        responses = iter(["%5", shlex.quote(shlex.join(wrong_mode))])
+
+        with patch.object(
+            bridge,
+            "checked",
+            side_effect=lambda *_: next(responses),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not owned"):
+                bridge.require_owned_runtime(
+                    self.args,
+                    object(),
+                    self.remote_home,
+                    self.codex_home,
+                )
+
     def test_cleanup_excludes_standard_remote_auth_homes(self):
         sftp = FakeSftp()
         isolated_auth = self.codex_home + "/auth.json"

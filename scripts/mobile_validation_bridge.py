@@ -56,6 +56,32 @@ def runtime_argv(args, remote_home, codex_home):
     return command
 
 
+def require_owned_runtime(args, client, remote_home, codex_home):
+    pane_output = checked(
+        client,
+        "tmux list-panes -s -t =" + RUNTIME_SESSION + " -F '#{pane_id}'",
+    )
+    pane_ids = pane_output.splitlines() if pane_output else []
+    if len(pane_ids) != 1 or not re.fullmatch(r"%[0-9]+", pane_ids[0]):
+        raise RuntimeError(
+            "Refusing to stop a runtime without exactly one validated pane"
+        )
+
+    start_command = checked(
+        client,
+        "tmux display-message -p -t "
+        + shlex.quote(pane_ids[0])
+        + " '#{pane_start_command}'",
+    )
+    actual_argv = shlex.split(start_command)
+    if len(actual_argv) == 1:
+        actual_argv = shlex.split(actual_argv[0])
+    if actual_argv != runtime_argv(args, remote_home, codex_home):
+        raise RuntimeError(
+            "Refusing to stop a runtime not owned by this validation"
+        )
+
+
 def remove_if_present(sftp, path):
     try:
         sftp.remove(path)
@@ -219,10 +245,7 @@ def cleanup(args, codex_home):
         _, status_out, _ = client.exec_command("tmux has-session -t =" + RUNTIME_SESSION + " 2>/dev/null")
         status_out.read()
         if status_out.channel.recv_exit_status() == 0:
-            start_command = checked(client, "tmux display-message -p -t =" + RUNTIME_SESSION + " '#{pane_start_command}'")
-            expected_command = runtime_argv(args, remote_home, codex_home)
-            if shlex.split(start_command) != expected_command:
-                raise RuntimeError("Refusing to stop a runtime not owned by this validation")
+            require_owned_runtime(args, client, remote_home, codex_home)
             checked(client, "tmux kill-session -t =" + RUNTIME_SESSION)
         sessions = checked(client, "tmux list-sessions -F '#{session_name}' 2>/dev/null || true")
         removed_terminals = 0
