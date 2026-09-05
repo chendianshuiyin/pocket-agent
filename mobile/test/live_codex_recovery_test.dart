@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pocket_agent/codex/codex.dart';
@@ -9,9 +8,14 @@ import 'package:pocket_agent/ssh/ssh_connection.dart';
 
 import 'live_vps_test.dart'
     show eventually, fixtureToken, loadFixture, makeConnection;
+import 'support/live_command_lifecycle_guard.dart';
+import 'support/live_turn_assertions.dart';
 
 const _commandMarker = '__POCKET_RECOVERY_COMMAND__';
 const _completionMarker = '__POCKET_RECOVERY_DONE__';
+const _recoveryCommand = "sleep 8 && printf '$_commandMarker\\n'";
+const _interruptCommand =
+    "sleep 30 && printf '__POCKET_INTERRUPT_UNEXPECTED__\\n'";
 
 void main() {
   test(
@@ -55,15 +59,11 @@ void main() {
         );
         threadId = thread.id;
 
-        var commandStarted = false;
-        notificationSubscription = rpc.notifications.listen((notification) {
-          if (notification.method != 'item/started' ||
-              notification.params['threadId'] != thread.id) {
-            return;
-          }
-          final item = jsonMap(notification.params['item']);
-          if (item['type'] == 'commandExecution') commandStarted = true;
-        });
+        final lifecycle = LiveCommandLifecycleGuard(
+          threadId: thread.id,
+          expectedCommand: _recoveryCommand,
+        );
+        notificationSubscription = rpc.notifications.listen(lifecycle.handle);
         final startedTurn = await rpc.sendMessage(
           thread.id,
           _recoveryPrompt(cwd),
@@ -71,8 +71,13 @@ void main() {
           effort: 'low',
         );
         await eventually(
-          () => commandStarted,
+          () => lifecycle.hasRelevantLifecycle(startedTurn.id),
           timeout: const Duration(seconds: 45),
+        );
+        expect(
+          lifecycle.validateInFlight(startedTurn.id),
+          isNull,
+          reason: 'The expected command must be running when transport shutdown begins',
         );
         // ignore: avoid_print
         print('Recovery test: command started=true');
@@ -131,11 +136,11 @@ void main() {
         );
         expect(matchingTurns.single.status, 'completed');
         expect(
-          _commandOutputContains(matchingTurns.single, _commandMarker),
+          successfulCommandOutputContains(matchingTurns.single, _commandMarker),
           isTrue,
         );
         expect(
-          _agentMessageContains(matchingTurns.single, _completionMarker),
+          agentMessageTextContains(matchingTurns.single, _completionMarker),
           isTrue,
         );
         // ignore: avoid_print
@@ -200,18 +205,12 @@ void main() {
         );
         threadId = thread.id;
 
-        var commandStarted = false;
+        final lifecycle = LiveCommandLifecycleGuard(
+          threadId: thread.id,
+          expectedCommand: _interruptCommand,
+        );
         String? terminalStatus;
-        notificationSubscription = rpc.notifications.listen((notification) {
-          if (notification.method != 'item/started' ||
-              notification.params['threadId'] != thread.id) {
-            return;
-          }
-          if (jsonMap(notification.params['item'])['type'] ==
-              'commandExecution') {
-            commandStarted = true;
-          }
-        });
+        notificationSubscription = rpc.notifications.listen(lifecycle.handle);
         final startedTurn = await rpc.sendMessage(
           thread.id,
           _interruptPrompt(cwd),
@@ -226,8 +225,13 @@ void main() {
           }
         });
         await eventually(
-          () => commandStarted,
+          () => lifecycle.hasRelevantLifecycle(startedTurn.id),
           timeout: const Duration(seconds: 45),
+        );
+        expect(
+          lifecycle.validateInFlight(startedTurn.id),
+          isNull,
+          reason: 'The expected command must be running before interrupt',
         );
         await rpc
             .interruptTurn(thread.id, startedTurn.id)
@@ -285,7 +289,7 @@ Work only inside this working directory: $cwd
 Do not read files, environment variables, credentials, or authentication data.
 Do not access the network or write any file.
 Use the shell tool once to run exactly:
-sleep 8 && printf '$_commandMarker\\n'
+$_recoveryCommand
 After it finishes, reply exactly $_completionMarker.
 ''';
 
@@ -295,19 +299,9 @@ Work only inside this working directory: $cwd
 Do not read files, environment variables, credentials, or authentication data.
 Do not access the network or write any file.
 Use the shell tool once to run exactly:
-sleep 30 && printf '__POCKET_INTERRUPT_UNEXPECTED__\\n'
+$_interruptCommand
 Wait for the command before replying.
 ''';
-
-bool _commandOutputContains(CodexTurn turn, String marker) => turn.items.any(
-  (item) =>
-      item.type == 'commandExecution' && jsonEncode(item.data).contains(marker),
-);
-
-bool _agentMessageContains(CodexTurn turn, String marker) => turn.items.any(
-  (item) =>
-      item.type == 'agentMessage' && jsonEncode(item.data).contains(marker),
-);
 
 Future<void> _bestEffort(Future<void>? operation) async {
   if (operation == null) return;

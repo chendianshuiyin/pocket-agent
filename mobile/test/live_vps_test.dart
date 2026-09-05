@@ -10,6 +10,9 @@ import 'package:pocket_agent/ssh/codex_tunnel.dart';
 import 'package:pocket_agent/ssh/remote_runtime.dart';
 import 'package:pocket_agent/ssh/ssh_connection.dart';
 
+import 'support/live_turn_assertions.dart';
+import 'support/private_fixture.dart';
+
 const fixtureToken = String.fromEnvironment('POCKET_FIXTURE_TOKEN');
 const fixturePort = String.fromEnvironment(
   'POCKET_FIXTURE_PORT',
@@ -27,8 +30,11 @@ Future<Map<String, dynamic>> loadFixture() async {
     if (response.statusCode != 200) {
       throw StateError('Private fixture unavailable');
     }
-    return jsonDecode(await utf8.decoder.bind(response).join())
-        as Map<String, dynamic>;
+    final bytes = await response.fold<List<int>>(<int>[], (all, chunk) {
+      all.addAll(chunk);
+      return all;
+    });
+    return decodePrivateFixture(bytes);
   } finally {
     http.close(force: true);
   }
@@ -172,7 +178,7 @@ void main() {
         final complete = rpc.turnSnapshots.firstWhere(
           (event) => event.threadId == thread.id && event.completed,
         );
-        await rpc.sendMessage(
+        final startedTurn = await rpc.sendMessage(
           thread.id,
           'Reply exactly POCKET_CODEX_OK. Do not use tools.',
           effort: 'low',
@@ -193,7 +199,15 @@ void main() {
           reason: 'Live Codex turn must complete successfully',
         );
         final history = await rpc.readThread(thread.id);
-        expect(jsonEncode(history.raw), contains('POCKET_CODEX_OK'));
+        final completedTurn = history.turns.singleWhere(
+          (turn) => turn.id == startedTurn.id,
+        );
+        expect(
+          agentMessageTextContains(completedTurn, 'POCKET_CODEX_OK'),
+          isTrue,
+          reason:
+              'The marker must come from the model response, not the prompt',
+        );
         expect(
           (await rpc.listThreads(cwd: fixture['cwd'] as String)).data
               .any((item) => item.id == thread.id),
@@ -215,7 +229,14 @@ void main() {
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         );
         final restored = await rpc.openThread(thread.id);
-        expect(jsonEncode(restored.raw), contains('POCKET_CODEX_OK'));
+        final restoredTurn = restored.turns.singleWhere(
+          (turn) => turn.id == startedTurn.id,
+        );
+        expect(
+          agentMessageTextContains(restoredTurn, 'POCKET_CODEX_OK'),
+          isTrue,
+          reason: 'Reconnect must restore the model response for the same turn',
+        );
         await rpc.archiveThread(thread.id);
       } finally {
         await rpc?.dispose();

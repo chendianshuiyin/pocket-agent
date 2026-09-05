@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../test/support/private_fixture.dart';
 
 const fixtureToken = String.fromEnvironment('POCKET_FIXTURE_TOKEN');
 const fixturePort = String.fromEnvironment(
@@ -25,10 +26,7 @@ Future<Map<String, Object?>> loadFixture() async {
       all.addAll(chunk);
       return all;
     });
-    final body = utf8.decode(bytes);
-    return (jsonDecode(body) as Map).map(
-      (key, value) => MapEntry(key.toString(), value),
-    );
+    return decodePrivateFixture(bytes);
   } finally {
     http.close(force: true);
   }
