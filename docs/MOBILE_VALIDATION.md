@@ -14,21 +14,21 @@
 
 | 验证项 | 结果与边界 |
 | --- | --- |
-| 静态检查与本地测试 | 主模型复跑 `flutter analyze` 无问题；`flutter test test tool/workspace_preview_test.dart tool/remote_login_test.dart`：108 通过（含隔离预览和设备登录安全测试）、6 个显式 live 测试跳过，跳过不计成功 |
+| 静态检查与本地测试 | 主模型复跑 `flutter analyze` 无问题；`flutter test test tool/workspace_preview_test.dart tool/remote_login_test.dart`：118 通过（含连接认证、隔离预览和设备登录安全测试）、6 个显式 live 测试跳过，跳过不计成功 |
 | 多服务器隔离 | 新增并由主模型复跑 7 项回归测试：同时连接、切换视图、同名 tmux、后台事件、编辑、删除与全局关闭；fake transport 验证客户端隔离，不冒充多台真实 VPS 并发测试 |
-| 验证脚本异常清理 | 主模型复跑 16 个 Python 测试通过，包含认证文件部分写入失败、chmod 失败、runtime 启动后失败、本地 fixture 清理与 tmux 窗格归属校验 |
+| 验证脚本异常清理 | 主模型复跑 27 个 Python 测试通过，包含认证文件部分写入失败、目录与 token 归属、runtime 启动后失败、本地 fixture 清理与 tmux 窗格归属校验，以及隔离 WebSocket 探针 |
 | SSH 真实连接 | 已验证主机 pin 拒绝错误指纹、PTY 输入/输出/resize、tmux 断开重接 |
-| 真实 app-server 传输 | 已验证 SSH forward、回环 tunnel `/readyz` 200、WebSocket initialize 和 model/thread RPC |
-| 无登录真实链路 | 独立 `live_ssh_vps_test.dart` 已通过：真实 readyz 与 `readAccount=signedOut`；未上传凭据、未发送模型请求 |
+| 真实 app-server 传输 | 已验证 SSH forward、WebSocket initialize 和 model/thread RPC；本轮新增真实缺失/错误/正确 capability token 的 401/401/101 探针，不再用 `/readyz` 200 代替认证 |
+| 无登录真实链路 | 本轮新认证实现下 `live_ssh_vps_test.dart` 通过：生产 runtime 认证探针与 `readAccount=signedOut`；未上传账号凭据、未发送模型请求 |
 | 真实模型回复 | 尚未通过：服务返回 refresh token revoked；不是模型成功回复 |
 | 官方设备登录 | 真实 app-server 已成功返回设备登录请求；浏览器到达官方账号选择页，但控制连接失败，登录等待超时。随后真实 `account/logout` 与 `account/read` 验证 `authenticated=false`；不能算登录或模型验证成功 |
 | 执行中断线恢复、真实 interrupt | 测试代码已编写，尚待有效登录完成实测 |
 | 审批/用户输入 | 模拟协议与真实生产 Port 测试验证：任务结束/中断/断线使旧请求失效，重连复用 request id 不能让旧对象批准新请求，resolved 通知清理当前提示；widget 测试验证全文和表单。尚未通过真实远端模型完整流程 |
 | Android 构建安装 | debug 与 `flutter build apk --release --split-per-abi` 均成功；x86_64 release-mode APK 安装后前台进程、首页和添加服务器导航正常，未见应用错误日志；ARM64 APK 的 manifest、ABI、APK v2 signature 已核查，但尚未在 ARM64 真机运行 |
-| Android 真实 SSH 工作流 | `app_ssh_vps_test.dart` 使用真实 VPS 完整通过：命令、分段中文、创建 tmux、完整客户端重建、恢复同一终端内的环境变量、真实 Codex 初始化与未登录提示。输入通过 xterm 的 TextInputClient 测试通道驱动，不是物理键盘测试 |
+| Android 真实 SSH 工作流 | 本轮新认证实现下 `app_ssh_vps_test.dart` 使用真实 VPS 完整复跑通过：命令、分段中文、创建 tmux、完整客户端重建、恢复同一终端内的环境变量、真实 Codex 初始化与未登录提示。输入通过 xterm 的 TextInputClient 测试通道驱动，不是物理键盘测试 |
 | Android 真实模型工作流 | 尚待有效登录；`app_vps_test.dart` 的 skipped integration 不算通过 |
 | 四屏视觉 | 首页与连接设置完成两轮 Android 独立评审；第二轮质量/原创/工艺/功能为 7/6/7/8。SSH 与 Codex 完成两轮独立评审，第二轮分别为 6/6/7/7 与 7/6/8/6；大字体、明暗主题、键盘、审批全文和必填反馈均实际检查，整体仍需迭代，不代表用户已确认最终视觉 |
-| App icon | 带通信耳机的候选已接入 Android legacy/adaptive 与 iOS AppIcon；源图未改。主模型通过资源校验，并在 Android 实装确认圆形桌面图标和点击启动；仍是可替换候选，不代表用户已定稿或所有 OEM/iOS 外框已验证 |
+| App icon | 耳机版已被否定，当前使用无耳机银白发 v2，已接入 Android legacy/adaptive 与 iOS AppIcon；主模型通过资源校验和 Android 实装圆形桌面图标、点击启动检查。仍是当前迭代，不代表用户已定稿或所有 OEM/iOS 外框已验证 |
 | 远端凭据清理 | 已停止授权与后续无认证测试 runtime；检查隔离目录、SSH 用户标准目录与 root 标准目录的 auth 文件不存在；删除临时本地 fixture 票据、撤销 adb reverse；本机 auth 未删除 |
 
 本记录区分单元测试、模拟服务、真实 SSH、真实模型与设备验证，任何一项不能替代另一项。
@@ -47,7 +47,73 @@ target API 36，ARM64 versionCode 2001；x86_64 split 为 4001。切换 split/un
 测试包时须注意版本号，不能因降级被拒就自动卸载用户数据。
 正式签名与 iOS 的逐项验证要求见 [平台交付基线](MOBILE_PLATFORMS.md)。
 
-### 新图标候选测试包
+### 当前连接认证修复测试包
+
+生产源码基线 `d6e62ea`，验证辅助工具后续提交为 `9a1e84c`。主模型执行
+`flutter build apk --release --split-per-abi --build-number=4`，三个 ABI 全部成功。
+ARM64 独立副本为 `artifacts/Pocket-Agent-0.3.0-android-arm64-auth-v4.apk`，
+21,331,203 bytes，SHA-256：
+`9b93f0931aa88bd4858af8e2b3087fce7ddb18da12f28230082d6bb99a69aaf3`。
+普通 `lib/main.dart` 入口，保留无耳机 v2 图标；ARM64 versionCode 2004、
+min API 24、target API 36。APK v2 signature 有效，仍为 Android Debug certificate，
+不是商店发布包，也未验证 ARM64 真机。
+
+本轮主模型复跑全项目 analyze、118 项本地测试及 27 项 Python 测试通过；
+6 项显式 live 测试因未配置 fixture 跳过，不计通过。认证回归包括缺失/错误
+token 必须返回明确 401/403、网络错误与超时不得冒充认证拒绝、超时后晚到
+socket 回收、重连继续携带 headers，以及旧 runtime 不被替换。
+
+### 真实 WebSocket 连接认证
+
+主模型运行 `scripts/vps_ws_auth_probe.py`，在真实 VPS 的独立临时目录、
+独立 `CODEX_HOME`、随机回环端口启动官方 Codex CLI 0.153.4。实测结果：
+缺失 token 返回 401，错误 token 返回 401，正确 token 返回 101。
+进程、监听、临时 token、隔离 `CODEX_HOME` 与临时目录均已确认清理。
+该探针不登录、不发送模型请求，不等同于真实模型验收。
+
+随后启动 `--without-codex-auth` fixture，复跑 `live_ssh_vps_test.dart` 通过：
+生产 `RemoteRuntimeManager` 经 SSH 读取 token 并验证认证，连接真实 app-server，
+`readAccount` 返回 `authenticated=false; kind=signedOut`。未读取或上传本机
+Codex 登录文件。fixture helper 仅接入预启动服务，不会自行启动默认账号目录。
+
+Android `app_ssh_vps_test.dart` 的真实 SSH、中文分段输出、tmux 恢复、Codex
+初始化及未登录 UI 全部通过。随后显式运行 `remote_login_test.dart` 的 `logout`
+动作，6 项通过且真实 RPC 确认 `authenticated=false`；没有发起新的设备登录。
+通过 `/finish` 停止隔离 runtime，确认 transport token 与 owner marker 已删除、
+临时终端已由测试回收；再次 SSH 核查隔离、用户与 root 的 Codex auth 文件均不存在。
+本地 defines 已删除、18089 listener 为 0、adb reverse 已撤销，本机 auth 未修改。
+
+模拟器恢复普通 `lib/main.dart` x86_64 release-mode APK，versionCode 4004。
+主模型检查正常空首页、添加服务器表单与返回，进程存活；AX 证据为 ignored
+`pocket-auth-v4-main.xml` 与 `pocket-auth-v4-add-server.xml`。本轮 integration
+测试框架默认在结束后卸载测试包，随后已重装普通版本；测试前该模拟器无服务器
+配置，不能把这次恢复称为保留数据升级。测试时临时提高了 pubspec build number
+以避免安装降级，结束后已恢复且未提交。后续复测使用 `--no-uninstall`，并提前
+检查安装版本与测试 APK versionCode；不要依赖工具卸载来解决降级失败。
+
+### 无耳机图标 v2 初次实装记录
+
+源码基线 `cc74a6f`。主模型执行
+`flutter build apk --release --split-per-abi --build-number=3`，三个 ABI 全部成功。
+ARM64 独立副本为 `artifacts/Pocket-Agent-0.3.0-android-arm64-owl-v2.apk`，
+21,331,203 bytes，SHA-256：
+`e92790932ae6374acddd8a2e63c1b732b90653b32ce3ca98d9af6eacf31e49c4`。
+普通 `lib/main.dart` 入口，ARM64 versionCode 2003，min API 24、target API 36，
+label Pocket Agent，APK v2 signature 有效；仍为 Android Debug certificate，
+不是商店签名，未验证 ARM64 真机。
+
+主模型通过 `adb install -r` 保留数据升级 x86_64 模拟器至 versionCode 4003；
+实际检查默认 launcher 的圆形头像、点击图标进入正常首页、添加服务器页面与返回。
+进程存活，定向日志未见 Flutter exception 或应用崩溃。
+截图与 AX 证据位于 ignored artifacts：`pocket-owl-v2-launcher.jpg`、
+`pocket-owl-v2-home.xml`、`pocket-owl-v2-main.xml`、`pocket-owl-v2-add-server.xml`。
+未检查其他 OEM mask，未声称 iOS 构建/实机通过。
+
+主模型复跑生成器 guard self-test、资源完整性检查、全项目 analyze 均通过；
+完整本地套件 108 通过 / 6 live 跳过。源文件未重绘，旧包和源稿均未删除。
+生成方式与完整 prompt 见 [无耳机头像 v2 记录](ICON_OWL_V2_PROMPT.md)。
+
+### 历史耳机版候选测试包
 
 源码基线 `3454cc2`。主模型执行
 `flutter build apk --release --split-per-abi --build-number=2`，三个 ABI 全部成功。
@@ -123,6 +189,11 @@ Codex 登录；重复复制原失效缓存不能视作解决。用户已授权�
 或仓库中提供认证文件。
 参见 [OpenAI 官方身份验证文档](https://learn.chatgpt.com/docs/auth)。
 
+本次继续执行时，Chrome 既有官方页面及新建的内置浏览器官方登录页均再次出现
+控制调用超时，无法可靠读取和操作登录表单。因此本次没有再发起设备登录请求，
+也未重复上传已失效的本机缓存。连接认证、signed-out SSH/Android 回归与凭据
+清理已完成；真实模型回复、执行中断线恢复、interrupt 和远端审批仍未验收。
+
 ## 可复现命令
 
 ```sh
@@ -139,7 +210,7 @@ flutter build apk --debug
 flutter test test/live_vps_test.dart --dart-define-from-file=../artifacts/validation-defines.json
 flutter test test/live_codex_recovery_test.dart --dart-define-from-file=../artifacts/validation-defines.json
 flutter test test/live_codex_approval_test.dart --dart-define-from-file=../artifacts/validation-defines.json
-flutter test integration_test/app_vps_test.dart -d emulator-5554 --dart-define-from-file=../artifacts/validation-defines.json
+flutter test integration_test/app_vps_test.dart -d emulator-5554 --no-uninstall --dart-define-from-file=../artifacts/validation-defines.json
 ```
 
 使用 `--without-codex-auth` 启动 fixture 时，只运行明确的无登录测试：
@@ -147,7 +218,7 @@ flutter test integration_test/app_vps_test.dart -d emulator-5554 --dart-define-f
 ```sh
 adb -s emulator-5554 reverse tcp:18089 tcp:18089
 flutter test test/live_ssh_vps_test.dart --dart-define-from-file=../artifacts/validation-defines.json
-flutter test integration_test/app_ssh_vps_test.dart -d emulator-5554 --dart-define-from-file=../artifacts/validation-defines.json
+flutter test integration_test/app_ssh_vps_test.dart -d emulator-5554 --no-uninstall --dart-define-from-file=../artifacts/validation-defines.json
 ```
 
 后者覆盖原生 SSH 输入、分段 UTF-8、完整客户端重建后的同一 tmux 会话恢复和
