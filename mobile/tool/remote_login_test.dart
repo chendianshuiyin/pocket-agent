@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pocket_agent/codex/codex.dart';
 import 'package:pocket_agent/ssh/codex_tunnel.dart';
+import 'package:pocket_agent/ssh/remote_runtime.dart';
 
 import '../test/live_vps_test.dart'
     show fixtureToken, loadFixture, makeConnection;
@@ -145,13 +146,14 @@ void main() {
           disposeLate: (_) => ssh.disconnect(),
         );
         tunnel = await _acquireBounded<CodexTunnel>(
-          CodexTunnel.open(ssh, fixture['remoteCodexPort'] as int),
+          RemoteRuntimeManager(ssh).openExistingTunnel(),
           timeout: _requestTimeout,
           disposeLate: (value) => value.close(),
         );
         client = await _acquireBounded<CodexClient>(
           CodexClient.connect(
             tunnel.uri,
+            headers: tunnel.clientHeaders,
             reconnectPolicy: const ReconnectPolicy(enabled: false),
           ),
           timeout: _requestTimeout,

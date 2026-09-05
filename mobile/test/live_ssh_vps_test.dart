@@ -23,12 +23,13 @@ void main() {
           const Duration(seconds: 30),
         );
         // ignore: avoid_print
-        print('Runtime readyz: ${status.running}');
+        print('Runtime authenticated transport: ${status.running}');
         expect(status.running, isTrue, reason: status.diagnostic);
 
-        tunnel = await CodexTunnel.open(ssh, status.remotePort);
+        tunnel = await runtime.openExistingTunnel();
         rpc = await CodexClient.connect(
           tunnel.uri,
+          headers: tunnel.clientHeaders,
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         ).timeout(const Duration(seconds: 30));
         final account = await rpc.readAccount().timeout(

@@ -148,9 +148,129 @@ class WithoutCodexAuthTest(unittest.TestCase):
             "-u",
             "OPENAI_API_KEY",
             "-u",
-            "CODEX_ACCESS_TOKEN",
+            "CODEX_API_KEY",
         ])
-        self.assertEqual(command[-2:], ["--listen", "ws://127.0.0.1:4500"])
+        for variable in (
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
+            "CODEX_ACCESS_TOKEN",
+            "OPENAI_ACCESS_TOKEN",
+            "CHATGPT_ACCESS_TOKEN",
+        ):
+            self.assertIn(variable, command)
+        self.assertEqual(
+            command[-6:],
+            [
+                "--listen",
+                "ws://127.0.0.1:4500",
+                "--ws-auth",
+                "capability-token",
+                "--ws-token-file",
+                self.remote_home + bridge.TRANSPORT_TOKEN_LEAF,
+            ],
+        )
+
+    def test_transport_token_paths_do_not_overlap_isolated_account_auth(self):
+        validation_root = self.remote_home + bridge.VALIDATION_LEAF
+        token_file, owner_file = bridge.transport_paths(
+            self.remote_home, validation_root
+        )
+
+        self.assertEqual(
+            token_file,
+            "/home/validation/.pocket-agent/app-server-4500.token",
+        )
+        self.assertEqual(
+            owner_file,
+            validation_root + "/transport-token-4500.sha256",
+        )
+        self.assertFalse(token_file.startswith(self.codex_home))
+
+    def test_validation_directories_are_checked_before_chmod(self):
+        commands = []
+        with patch.object(
+            bridge,
+            "checked",
+            side_effect=lambda _client, command: commands.append(command) or "",
+        ):
+            paths = bridge.ensure_validation_directories(
+                object(), self.remote_home
+            )
+
+        self.assertEqual(
+            paths,
+            (
+                self.remote_home + bridge.VALIDATION_LEAF,
+                self.codex_home,
+                self.remote_home + bridge.VALIDATION_LEAF + "/workspace",
+            ),
+        )
+        self.assertNotIn("mkdir -p", commands[0])
+        self.assertLess(commands[0].find("test -L"), commands[0].find("chmod 700"))
+
+    def test_transport_token_is_generated_remotely_and_validated(self):
+        validation_root = self.remote_home + bridge.VALIDATION_LEAF
+        commands = []
+
+        with patch.object(
+            bridge,
+            "checked",
+            side_effect=lambda _client, command: commands.append(command)
+            or "a" * 64,
+        ):
+            token = bridge.create_fixture_transport_token(
+                object(), self.remote_home, validation_root
+            )
+
+        self.assertEqual(token, "a" * 64)
+        self.assertEqual(len(commands), 1)
+        self.assertNotIn("a" * 64, commands[0])
+        self.assertIn("sha256sum", commands[0])
+        self.assertLess(
+            commands[0].find("trap cleanup_partial"),
+            commands[0].find('mktemp "$token_file.fixture.XXXXXX"'),
+        )
+        self.assertLess(
+            commands[0].find("token_created=1"),
+            commands[0].find('ln -- "$token_temp" "$token_file"'),
+        )
+
+    def test_transport_cleanup_checks_owner_hash_before_removal(self):
+        validation_root = self.remote_home + bridge.VALIDATION_LEAF
+        commands = []
+
+        with patch.object(
+            bridge,
+            "checked",
+            side_effect=lambda _client, command: commands.append(command)
+            or "removed",
+        ):
+            bridge.cleanup_fixture_transport_token(
+                object(), self.remote_home, validation_root
+            )
+
+        self.assertEqual(len(commands), 1)
+        self.assertIn("actual_hash", commands[0])
+        self.assertIn("owner_hash", commands[0])
+        self.assertNotIn("rm -rf", commands[0])
+
+    def test_transport_cleanup_recovers_owner_only_but_rejects_token_only(self):
+        validation_root = self.remote_home + bridge.VALIDATION_LEAF
+        with patch.object(bridge, "checked", return_value="owner-removed"):
+            self.assertEqual(
+                bridge.cleanup_fixture_transport_token(
+                    object(), self.remote_home, validation_root
+                ),
+                "owner-removed",
+            )
+        with patch.object(bridge, "checked", return_value="token-without-owner"):
+            with self.assertRaisesRegex(
+                bridge.FixtureCleanupIncomplete,
+                "was not removed and requires manual inspection",
+            ):
+                bridge.cleanup_fixture_transport_token(
+                    object(), self.remote_home, validation_root
+                )
 
     def test_runtime_ownership_rejects_empty_pane_list(self):
         with patch.object(bridge, "checked", return_value=""):
@@ -336,11 +456,17 @@ class WithoutCodexAuthTest(unittest.TestCase):
 
         def fake_checked(_client, command):
             commands.append(command)
+            if "actual_hash" in command:
+                return "removed"
             return ""
 
         local_auth = json.dumps({"auth_mode": "chatgpt", "tokens": {"test": True}})
         with patch.object(bridge, "connect", return_value=client), patch.object(
             bridge, "checked", side_effect=fake_checked
+        ), patch.object(
+            bridge,
+            "create_fixture_transport_token",
+            return_value="a" * 64,
         ), patch.object(
             bridge,
             "read_connection",
@@ -395,6 +521,33 @@ class WithoutCodexAuthTest(unittest.TestCase):
         self.assertTrue(sftp.closed)
         self.assertTrue(client.closed)
 
+    def test_uncertain_transport_creation_requires_cleanup_only(self):
+        args = SimpleNamespace(
+            without_codex_auth=True,
+            config="unused-test-config",
+        )
+        sftp = FakeSftp(remote_home=self.remote_home)
+        client = FakeClient(sftp)
+
+        with patch.object(bridge, "connect", return_value=client), patch.object(
+            bridge, "checked", return_value=""
+        ), patch.object(
+            bridge,
+            "create_fixture_transport_token",
+            side_effect=RuntimeError("uncertain remote result"),
+        ), patch.object(
+            bridge,
+            "cleanup_fixture_transport_token",
+            return_value=None,
+        ):
+            with self.assertRaises(bridge.FixtureCleanupIncomplete) as caught:
+                bridge.setup(args)
+
+        self.assertEqual(
+            str(caught.exception),
+            "Isolated fixture cleanup is incomplete; run --cleanup-only",
+        )
+
     def test_setup_cleanup_failure_reports_redacted_recovery(self):
         args = SimpleNamespace(
             without_codex_auth=False,
@@ -413,6 +566,10 @@ class WithoutCodexAuthTest(unittest.TestCase):
             bridge,
             "checked",
             side_effect=fake_checked,
+        ), patch.object(
+            bridge,
+            "create_fixture_transport_token",
+            return_value="a" * 64,
         ), patch.object(
             bridge,
             "read_connection",

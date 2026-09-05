@@ -141,9 +141,10 @@ void main() {
           'Runtime readiness: ${runtimeStatus.running}; ${runtimeStatus.diagnostic ?? "ready"}',
         );
         expect(runtimeStatus.running, isTrue);
-        tunnel = await runtime.openTunnel();
+        tunnel = await runtime.openExistingTunnel();
         rpc = await CodexClient.connect(
           tunnel.uri,
+          headers: tunnel.clientHeaders,
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         );
         // ignore: avoid_print
@@ -207,9 +208,10 @@ void main() {
 
         ssh = makeConnection(fixture);
         await ssh.connect(onFirstUseHostKey: (_) async => false);
-        tunnel = await RemoteRuntimeManager(ssh).openTunnel();
+        tunnel = await RemoteRuntimeManager(ssh).openExistingTunnel();
         rpc = await CodexClient.connect(
           tunnel.uri,
+          headers: tunnel.clientHeaders,
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         );
         final restored = await rpc.openThread(thread.id);

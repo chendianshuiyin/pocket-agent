@@ -32,11 +32,12 @@ void main() {
         await ssh
             .connect(onFirstUseHostKey: (_) async => false)
             .timeout(const Duration(seconds: 30));
-        tunnel = await RemoteRuntimeManager(
-          ssh,
-        ).openTunnel().timeout(const Duration(seconds: 30));
+        tunnel = await RemoteRuntimeManager(ssh)
+            .openExistingTunnel()
+            .timeout(const Duration(seconds: 30));
         rpc = await CodexClient.connect(
           tunnel.uri,
+          headers: tunnel.clientHeaders,
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         ).timeout(const Duration(seconds: 30));
         final account = await rpc.readAccount();
@@ -91,11 +92,12 @@ void main() {
         await ssh
             .connect(onFirstUseHostKey: (_) async => false)
             .timeout(const Duration(seconds: 30));
-        tunnel = await RemoteRuntimeManager(
-          ssh,
-        ).openTunnel().timeout(const Duration(seconds: 30));
+        tunnel = await RemoteRuntimeManager(ssh)
+            .openExistingTunnel()
+            .timeout(const Duration(seconds: 30));
         rpc = await CodexClient.connect(
           tunnel.uri,
+          headers: tunnel.clientHeaders,
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         ).timeout(const Duration(seconds: 30));
 
@@ -116,10 +118,7 @@ void main() {
             completedStatus = turn.status;
           }
         }
-        await eventually(
-          () => finished,
-          timeout: const Duration(minutes: 2),
-        );
+        await eventually(() => finished, timeout: const Duration(minutes: 2));
 
         final history = await rpc.readThread(thread.id, includeTurns: true);
         final matchingTurns = history.turns
@@ -131,10 +130,18 @@ void main() {
           reason: 'Reconnect must continue the original turn rather than start another one',
         );
         expect(matchingTurns.single.status, 'completed');
-        expect(_commandOutputContains(matchingTurns.single, _commandMarker), isTrue);
-        expect(_agentMessageContains(matchingTurns.single, _completionMarker), isTrue);
+        expect(
+          _commandOutputContains(matchingTurns.single, _commandMarker),
+          isTrue,
+        );
+        expect(
+          _agentMessageContains(matchingTurns.single, _completionMarker),
+          isTrue,
+        );
         // ignore: avoid_print
-        print('Recovery test: original turn completed=${completedStatus == 'completed'}');
+        print(
+          'Recovery test: original turn completed=${completedStatus == 'completed'}',
+        );
 
         await rpc.archiveThread(thread.id).timeout(const Duration(seconds: 20));
         archived = true;
@@ -148,7 +155,9 @@ void main() {
         }
         await _bestEffort(rpc?.dispose().timeout(const Duration(seconds: 10)));
         await _bestEffort(tunnel?.close().timeout(const Duration(seconds: 10)));
-        await _bestEffort(ssh?.disconnect().timeout(const Duration(seconds: 10)));
+        await _bestEffort(
+          ssh?.disconnect().timeout(const Duration(seconds: 10)),
+        );
       }
     },
     skip: fixtureToken.isEmpty,
@@ -174,11 +183,12 @@ void main() {
         await ssh
             .connect(onFirstUseHostKey: (_) async => false)
             .timeout(const Duration(seconds: 30));
-        tunnel = await RemoteRuntimeManager(
-          ssh,
-        ).openTunnel().timeout(const Duration(seconds: 30));
+        tunnel = await RemoteRuntimeManager(ssh)
+            .openExistingTunnel()
+            .timeout(const Duration(seconds: 30));
         rpc = await CodexClient.connect(
           tunnel.uri,
+          headers: tunnel.clientHeaders,
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         ).timeout(const Duration(seconds: 30));
         final model = await _preferredModel(rpc);
@@ -197,7 +207,8 @@ void main() {
               notification.params['threadId'] != thread.id) {
             return;
           }
-          if (jsonMap(notification.params['item'])['type'] == 'commandExecution') {
+          if (jsonMap(notification.params['item'])['type'] ==
+              'commandExecution') {
             commandStarted = true;
           }
         });
@@ -248,7 +259,9 @@ void main() {
         }
         await _bestEffort(rpc?.dispose().timeout(const Duration(seconds: 10)));
         await _bestEffort(tunnel?.close().timeout(const Duration(seconds: 10)));
-        await _bestEffort(ssh?.disconnect().timeout(const Duration(seconds: 10)));
+        await _bestEffort(
+          ssh?.disconnect().timeout(const Duration(seconds: 10)),
+        );
       }
     },
     skip: fixtureToken.isEmpty,
@@ -266,7 +279,8 @@ Future<String> _preferredModel(CodexClient rpc) async {
   return models.data.first.model;
 }
 
-String _recoveryPrompt(String cwd) => '''
+String _recoveryPrompt(String cwd) =>
+    '''
 Work only inside this working directory: $cwd
 Do not read files, environment variables, credentials, or authentication data.
 Do not access the network or write any file.
@@ -275,7 +289,8 @@ sleep 8 && printf '$_commandMarker\\n'
 After it finishes, reply exactly $_completionMarker.
 ''';
 
-String _interruptPrompt(String cwd) => '''
+String _interruptPrompt(String cwd) =>
+    '''
 Work only inside this working directory: $cwd
 Do not read files, environment variables, credentials, or authentication data.
 Do not access the network or write any file.
@@ -290,7 +305,8 @@ bool _commandOutputContains(CodexTurn turn, String marker) => turn.items.any(
 );
 
 bool _agentMessageContains(CodexTurn turn, String marker) => turn.items.any(
-  (item) => item.type == 'agentMessage' && jsonEncode(item.data).contains(marker),
+  (item) =>
+      item.type == 'agentMessage' && jsonEncode(item.data).contains(marker),
 );
 
 Future<void> _bestEffort(Future<void>? operation) async {

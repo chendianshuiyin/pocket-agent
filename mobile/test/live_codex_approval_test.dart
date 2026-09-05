@@ -200,10 +200,11 @@ void main() {
             .connect(onFirstUseHostKey: (_) async => false)
             .timeout(const Duration(seconds: 30));
         tunnel = await RemoteRuntimeManager(ssh)
-            .openTunnel()
+            .openExistingTunnel()
             .timeout(const Duration(seconds: 30));
         rpc = await CodexClient.connect(
           tunnel.uri,
+          headers: tunnel.clientHeaders,
           reconnectPolicy: const ReconnectPolicy(enabled: false),
         ).timeout(const Duration(seconds: 30));
         final account = await rpc.readAccount().timeout(

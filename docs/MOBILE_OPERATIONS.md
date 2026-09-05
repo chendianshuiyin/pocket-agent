@@ -90,7 +90,8 @@ python scripts/mobile_validation_bridge.py --config <private-config> --without-c
 
 该模式不读取或上传本机 Codex auth，将远端隔离 `CODEX_HOME` 强制设为 file-based
 credential storage、确认其中不存在 `auth.json`，并从 runtime 环境移除
-`OPENAI_API_KEY` 与 `CODEX_ACCESS_TOKEN`。它也不会退出或删除远端用户及 root 的
+`OPENAI_API_KEY`、`CODEX_API_KEY`、`CODEX_ACCESS_TOKEN`、`OPENAI_ACCESS_TOKEN`
+与 `CHATGPT_ACCESS_TOKEN`。它也不会退出或删除远端用户及 root 的
 标准 Codex 登录。默认模式仍只用于用户显式授权复制本机 Codex 登录的验证。
 
 需要新的认证而不复制本机缓存时，可在上述隔离 fixture 上显式运行
@@ -105,6 +106,13 @@ credential storage、确认其中不存在 `auth.json`，并从 runtime 环境�
 该退出行为仅适用于本次用户明确授权的验证，不能作为 App 默认退出行为。
 无认证模式的异常清理必须同时传入 `--without-codex-auth`，其清理范围仅限隔离
 runtime 与隔离 auth 路径。
+
+两种模式均使用独立的 app-server 连接 token。fixture 拒绝占用已有 token 或
+runtime，清理时先停止经归属检查的 runtime，再核对 token 的 owner、0600 权限、
+link count 与隔离 SHA-256 marker；只有匹配后才删除。缺少 owner marker 的 token
+会保留并报告需要人工检查，不能通过重复清理或放宽校验删除未知凭据。
+预启动 fixture 的 Dart 测试与登录工具使用 `openExistingTunnel()`：只检查并连接
+已有 runtime，不会在 fixture 消失时自行启动默认 `CODEX_HOME` 的服务。
 
 认证文件删除后无法从 VPS 恢复登录；需要再次运行 `codex login`。本地认证文件
 仅被读取，不会被辅助程序删除。远端工作文件和正常 SSH 配置不会被清理。
