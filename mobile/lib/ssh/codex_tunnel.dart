@@ -16,10 +16,12 @@ class CodexTunnel {
   final Set<_TunnelPair> _pairs = {};
   late final StreamSubscription<Socket> _serverSubscription;
   bool _closed = false;
+  String? _lastFailureType;
 
   Uri get uri => Uri.parse('ws://127.0.0.1:${_server.port}');
   int get localPort => _server.port;
   bool get isClosed => _closed;
+  String? get lastFailureType => _lastFailureType;
 
   static Future<CodexTunnel> open(
     SshTransport connection,
@@ -49,10 +51,16 @@ class CodexTunnel {
         return;
       }
       late final _TunnelPair pair;
-      pair = _TunnelPair(local, remote, onClosed: () => _pairs.remove(pair));
+      pair = _TunnelPair(
+        local,
+        remote,
+        onClosed: () => _pairs.remove(pair),
+        onFailure: (type) => _lastFailureType = type,
+      );
       _pairs.add(pair);
       pair.start();
-    } catch (_) {
+    } catch (error) {
+      _lastFailureType = 'connect:${error.runtimeType}';
       local.destroy();
     }
   }
@@ -69,11 +77,17 @@ class CodexTunnel {
 }
 
 class _TunnelPair {
-  _TunnelPair(this.local, this.remote, {required this.onClosed});
+  _TunnelPair(
+    this.local,
+    this.remote, {
+    required this.onClosed,
+    required this.onFailure,
+  });
 
   final Socket local;
   final SSHForwardChannel remote;
   final void Function() onClosed;
+  final void Function(String type) onFailure;
   bool _closed = false;
 
   void start() {
@@ -91,7 +105,8 @@ class _TunnelPair {
       );
       await remote.flush();
       completedNormally = true;
-    } catch (_) {
+    } catch (error) {
+      onFailure(error.runtimeType.toString());
       // Closing either endpoint below also terminates the opposite pump.
     } finally {
       if (completedNormally) {
@@ -124,7 +139,7 @@ Future<void> pumpBidirectionalStreams({
   required StreamSink<List<int>> rightOutput,
 }) async {
   await Future.wait<void>([
-    leftInput.pipe(rightOutput),
-    rightInput.pipe(leftOutput),
+    leftInput.map<List<int>>((chunk) => chunk).pipe(rightOutput),
+    rightInput.map<List<int>>((chunk) => chunk).pipe(leftOutput),
   ], eagerError: true);
 }

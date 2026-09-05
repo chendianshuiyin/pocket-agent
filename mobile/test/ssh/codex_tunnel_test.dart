@@ -1,12 +1,13 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pocket_agent/ssh/codex_tunnel.dart';
 
 void main() {
   test('bidirectional pump preserves final chunks before EOF', () async {
-    final leftInput = StreamController<List<int>>();
-    final rightInput = StreamController<List<int>>();
+    final leftInput = StreamController<Uint8List>();
+    final rightInput = StreamController<Uint8List>();
     final leftOutput = StreamController<List<int>>();
     final rightOutput = StreamController<List<int>>();
     final receivedByLeft = <int>[];
@@ -20,10 +21,10 @@ void main() {
       rightInput: rightInput.stream,
       rightOutput: rightOutput.sink,
     );
-    leftInput.add([1, 2]);
-    rightInput.add([7]);
-    leftInput.add([3]);
-    rightInput.add([8, 9]);
+    leftInput.add(Uint8List.fromList([1, 2]));
+    rightInput.add(Uint8List.fromList([7]));
+    leftInput.add(Uint8List.fromList([3]));
+    rightInput.add(Uint8List.fromList([8, 9]));
     await leftInput.close();
     await rightInput.close();
 

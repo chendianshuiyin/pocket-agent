@@ -43,6 +43,7 @@ class RemoteRuntimeManager {
   final Duration startupTimeout;
   late final Future<bool> Function()? _readinessProbe;
   late final Future<bool> Function()? _portListeningProbe;
+  String? _lastProbeDiagnostic;
 
   String get _sessionName => 'pocket-agent-runtime-codex-$remotePort';
 
@@ -68,7 +69,9 @@ class RemoteRuntimeManager {
       running: healthy,
       codexVersion: version,
       remotePort: remotePort,
-      diagnostic: healthy ? null : 'app-server readiness probe failed',
+      diagnostic: healthy
+          ? null
+          : _lastProbeDiagnostic ?? 'app-server readiness probe failed',
     );
   }
 
@@ -159,19 +162,32 @@ class RemoteRuntimeManager {
   Future<bool> _probeThroughNewTunnel() async {
     final override = _readinessProbe;
     if (override != null) return override();
+    _lastProbeDiagnostic = null;
     CodexTunnel? tunnel;
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    var stage = 'open-tunnel';
     try {
       tunnel = await CodexTunnel.open(connection, remotePort);
+      stage = 'send-request';
       final request = await client
           .getUrl(tunnel.uri.replace(scheme: 'http', path: '/readyz'))
           .timeout(const Duration(seconds: 2));
+      stage = 'read-response';
       final response = await request.close().timeout(
         const Duration(seconds: 2),
       );
       await response.drain<void>().timeout(const Duration(seconds: 2));
-      return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
+      final healthy = response.statusCode >= 200 && response.statusCode < 300;
+      if (!healthy) {
+        _lastProbeDiagnostic =
+            'app-server readiness probe returned HTTP ${response.statusCode}';
+      }
+      return healthy;
+    } catch (error) {
+      final tunnelFailure = tunnel?.lastFailureType;
+      _lastProbeDiagnostic =
+          'app-server readiness probe failed at $stage (${error.runtimeType}'
+          '${tunnelFailure == null ? '' : ', tunnel $tunnelFailure'})';
       return false;
     } finally {
       client.close(force: true);

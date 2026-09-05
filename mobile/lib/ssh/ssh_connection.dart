@@ -8,6 +8,7 @@ import '../core/server_profile.dart';
 import '../core/server_repository.dart';
 import '../core/server_secret.dart';
 import 'pty_session.dart';
+import 'queued_ssh_socket.dart';
 import 'shell_command.dart';
 
 enum SshConnectionState {
@@ -451,11 +452,12 @@ class DartSshDriverFactory implements SshDriverFactory {
     final identities = profile.authentication == SshAuthentication.privateKey
         ? SSHKeyPair.fromPem(secret.privateKeyPem!, secret.privateKeyPassphrase)
         : null;
-    final socket = await SSHSocket.connect(
+    final nativeSocket = await SSHSocket.connect(
       profile.host,
       profile.port,
       timeout: connectTimeout,
     );
+    final socket = QueuedSSHSocket(nativeSocket);
     try {
       final client = SSHClient(
         socket,
