@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:uuid/uuid.dart';
 
 import '../codex/codex.dart';
@@ -263,17 +264,36 @@ class _PtyShellHandle implements ShellHandle {
   Future<void> close() => _session.close();
 }
 
+@visibleForTesting
+CodexPort productionCodexPortForTesting(
+  CodexClient client, {
+  Future<void> Function()? closeTransport,
+}) => _ProductionCodexPort.forTesting(client, closeTransport: closeTransport);
+
 class _ProductionCodexPort implements CodexPort, CodexNavigationPort {
-  _ProductionCodexPort(this._client, this._tunnel) {
+  _ProductionCodexPort(this._client, CodexTunnel tunnel)
+    : _closeTransport = tunnel.close {
+    _listen();
+  }
+
+  _ProductionCodexPort.forTesting(
+    this._client, {
+    Future<void> Function()? closeTransport,
+  }) : _closeTransport = closeTransport ?? _noOpClose {
+    _listen();
+  }
+
+  void _listen() {
     _subscriptions.add(_client.itemSnapshots.listen(_onItem));
     _subscriptions.add(_client.turnSnapshots.listen(_onTurn));
     _subscriptions.add(_client.threadSnapshots.listen(_onThread));
     _subscriptions.add(_client.serverRequests.listen(_onServerRequest));
+    _subscriptions.add(_client.notifications.listen(_onNotification));
     _subscriptions.add(_client.states.listen(_onConnection));
   }
 
   final CodexClient _client;
-  final CodexTunnel _tunnel;
+  final Future<void> Function() _closeTransport;
   final _controller = StreamController<CodexWorkspaceSnapshot>.broadcast();
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   final Map<String, TimelineItem> _items = {};
@@ -561,8 +581,17 @@ class _ProductionCodexPort implements CodexPort, CodexNavigationPort {
     final thread = _activeThread;
     final turn = _activeTurn;
     if (thread == null || turn == null) return;
-    await _client.interruptTurn(thread.id, turn.id);
-    _emit(_current.copyWith(runState: ThreadRunState.idle));
+    if (!await _client.interruptTurn(thread.id, turn.id)) return;
+    if (!identical(_activeThread, thread) || !identical(_activeTurn, turn)) {
+      return;
+    }
+    _emit(
+      _current.copyWith(
+        runState: ThreadRunState.idle,
+        clearApproval: true,
+        clearUserInput: true,
+      ),
+    );
   }
 
   void _onItem(ItemSnapshot snapshot) {
@@ -584,13 +613,32 @@ class _ProductionCodexPort implements CodexPort, CodexNavigationPort {
 
   void _onTurn(TurnSnapshot snapshot) {
     if (snapshot.threadId != _activeThread?.id) return;
+    if (snapshot.completed &&
+        _activeTurn != null &&
+        snapshot.turn.id != _activeTurn!.id) {
+      return;
+    }
     _activeTurn = snapshot.turn;
     final presentation = codexTurnPresentation(snapshot.turn);
+    final approvalRequest = _current.approval?.raw;
+    final userInputRequest = _current.userInput?.raw;
+    final clearApproval =
+        snapshot.completed &&
+        approvalRequest is ServerRequest &&
+        approvalRequest.threadId == snapshot.threadId &&
+        approvalRequest.turnId == snapshot.turn.id;
+    final clearUserInput =
+        snapshot.completed &&
+        userInputRequest is ServerRequest &&
+        userInputRequest.threadId == snapshot.threadId &&
+        userInputRequest.turnId == snapshot.turn.id;
     _emit(
       _current.copyWith(
         runState: presentation.state,
         error: presentation.error,
         clearError: presentation.error == null,
+        clearApproval: clearApproval,
+        clearUserInput: clearUserInput,
       ),
     );
   }
@@ -610,6 +658,8 @@ class _ProductionCodexPort implements CodexPort, CodexNavigationPort {
         error: snapshot.phase == ConnectionPhase.disconnected
             ? 'Codex 连接已断开，请手动重连。'
             : null,
+        clearApproval: !connected,
+        clearUserInput: !connected,
       ),
     );
   }
@@ -635,15 +685,41 @@ class _ProductionCodexPort implements CodexPort, CodexNavigationPort {
     );
   }
 
+  void _onNotification(RpcNotification notification) {
+    if (notification.method != 'serverRequest/resolved') return;
+    final requestId = notification.params['requestId'];
+    final threadId = jsonString(notification.params['threadId']);
+    final approvalRequest = _current.approval?.raw;
+    final userInputRequest = _current.userInput?.raw;
+    final clearApproval =
+        approvalRequest is ServerRequest &&
+        approvalRequest.id == requestId &&
+        (threadId == null || approvalRequest.threadId == threadId);
+    final clearUserInput =
+        userInputRequest is ServerRequest &&
+        userInputRequest.id == requestId &&
+        (threadId == null || userInputRequest.threadId == threadId);
+    if (!clearApproval && !clearUserInput) return;
+    _emit(
+      _current.copyWith(
+        clearApproval: clearApproval,
+        clearUserInput: clearUserInput,
+        runState: ThreadRunState.running,
+      ),
+    );
+  }
+
   @override
   Future<void> decideApproval(
     ApprovalPrompt prompt, {
     required bool approved,
   }) async {
-    _client.respondApproval(
+    if (!identical(_current.approval, prompt)) return;
+    final responded = _client.respondApproval(
       prompt.raw as ServerRequest,
       approved ? ApprovalDecision.accept : ApprovalDecision.decline,
     );
+    if (!responded || !identical(_current.approval, prompt)) return;
     _emit(
       _current.copyWith(runState: ThreadRunState.running, clearApproval: true),
     );
@@ -654,7 +730,12 @@ class _ProductionCodexPort implements CodexPort, CodexNavigationPort {
     UserInputPrompt prompt,
     Map<String, List<String>> answers,
   ) async {
-    _client.respondUserInput(prompt.raw as ServerRequest, answers);
+    if (!identical(_current.userInput, prompt)) return;
+    final responded = _client.respondUserInput(
+      prompt.raw as ServerRequest,
+      answers,
+    );
+    if (!responded || !identical(_current.userInput, prompt)) return;
     _emit(
       _current.copyWith(runState: ThreadRunState.running, clearUserInput: true),
     );
@@ -666,9 +747,11 @@ class _ProductionCodexPort implements CodexPort, CodexNavigationPort {
       await subscription.cancel();
     }
     await _client.dispose();
-    await _tunnel.close();
+    await _closeTransport();
     await _controller.close();
   }
+
+  static Future<void> _noOpClose() async {}
 
   static ThreadSummary _threadSummary(CodexThread thread) => ThreadSummary(
     id: thread.id,

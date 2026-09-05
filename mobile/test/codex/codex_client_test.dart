@@ -4,6 +4,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pocket_agent/app/app_models.dart';
+import 'package:pocket_agent/app/app_services.dart';
 import 'package:pocket_agent/codex/codex.dart';
 
 import 'mock_app_server.dart';
@@ -418,6 +420,338 @@ void main() {
     );
   });
 
+  test(
+    'turn completion invalidates old approval but a new request can respond',
+    () async {
+      client = await CodexClient.connect(
+        server.uri,
+        reconnectPolicy: const ReconnectPolicy(enabled: false),
+      );
+      server.request(
+        201,
+        'item/commandExecution/requestApproval',
+        <String, Object?>{
+          'threadId': 'thread-1',
+          'turnId': 'turn-1',
+          'itemId': 'item-1',
+        },
+      );
+      final stale = await client!.serverRequests.first;
+      server.notify('turn/completed', <String, Object?>{
+        'threadId': 'thread-1',
+        'turn': <String, Object?>{
+          'id': 'turn-1',
+          'status': 'completed',
+          'items': <Object?>[],
+        },
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(client!.respondApproval(stale, ApprovalDecision.accept), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_responsesFor(server, 201), isEmpty);
+
+      server.request(
+        201,
+        'item/commandExecution/requestApproval',
+        <String, Object?>{
+          'threadId': 'thread-1',
+          'turnId': 'turn-2',
+          'itemId': 'item-2',
+        },
+      );
+      final current = await client!.serverRequests.first;
+      expect(current, isNot(same(stale)));
+      expect(
+        client!.respondApproval(current, ApprovalDecision.decline),
+        isTrue,
+      );
+      await _waitForResponse(server, 201);
+    },
+  );
+
+  test(
+    'reconnect request id reuse cannot revive an old approval object',
+    () async {
+      client = await CodexClient.connect(
+        server.uri,
+        reconnectPolicy: const ReconnectPolicy(
+          initialDelay: Duration(milliseconds: 5),
+        ),
+      );
+      server.request(202, 'item/fileChange/requestApproval', <String, Object?>{
+        'threadId': 'thread-1',
+        'turnId': 'turn-1',
+        'itemId': 'item-1',
+      });
+      final stale = await client!.serverRequests.first;
+      await server.closeConnections();
+      await client!.states.firstWhere(
+        (state) => state.phase == ConnectionPhase.disconnected,
+      );
+      await client!.states.firstWhere(
+        (state) =>
+            state.phase == ConnectionPhase.ready && server.connectionCount >= 2,
+      );
+
+      server.request(202, 'item/fileChange/requestApproval', <String, Object?>{
+        'threadId': 'thread-1',
+        'turnId': 'turn-2',
+        'itemId': 'item-2',
+      });
+      final current = await client!.serverRequests.first;
+      expect(client!.respondApproval(stale, ApprovalDecision.accept), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_responsesFor(server, 202), isEmpty);
+      expect(client!.respondApproval(current, ApprovalDecision.accept), isTrue);
+      await _waitForResponse(server, 202);
+    },
+  );
+
+  test('reconnect request id reuse cannot revive old user input', () async {
+    client = await CodexClient.connect(
+      server.uri,
+      reconnectPolicy: const ReconnectPolicy(
+        initialDelay: Duration(milliseconds: 5),
+      ),
+    );
+    server.request(203, 'item/tool/requestUserInput', <String, Object?>{
+      'threadId': 'thread-1',
+      'turnId': 'turn-1',
+      'itemId': 'item-1',
+      'questions': <Object?>[],
+    });
+    final stale = await client!.serverRequests.first;
+    await server.closeConnections();
+    await client!.states.firstWhere(
+      (state) => state.phase == ConnectionPhase.disconnected,
+    );
+    await client!.states.firstWhere(
+      (state) =>
+          state.phase == ConnectionPhase.ready && server.connectionCount >= 2,
+    );
+
+    server.request(203, 'item/tool/requestUserInput', <String, Object?>{
+      'threadId': 'thread-1',
+      'turnId': 'turn-2',
+      'itemId': 'item-2',
+      'questions': <Object?>[],
+    });
+    final current = await client!.serverRequests.first;
+    expect(
+      client!.respondUserInput(stale, const {
+        'q': ['old'],
+      }),
+      isFalse,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(_responsesFor(server, 203), isEmpty);
+    expect(
+      client!.respondUserInput(current, const {
+        'q': ['new'],
+      }),
+      isTrue,
+    );
+    await _waitForResponse(server, 203);
+  });
+
+  test(
+    'production port clears completed turn approval and rejects its old prompt',
+    () async {
+      server.handler = (message) {
+        switch (message.value['method']) {
+          case 'thread/read':
+            message.result(<String, Object?>{
+              'thread': <String, Object?>{
+                'id': 'thread-1',
+                'turns': <Object?>[
+                  <String, Object?>{
+                    'id': 'turn-1',
+                    'status': 'inProgress',
+                    'items': <Object?>[],
+                  },
+                ],
+              },
+            });
+          case 'thread/resume':
+            message.result(<String, Object?>{
+              'thread': <String, Object?>{
+                'id': 'thread-1',
+                'turns': <Object?>[],
+              },
+            });
+        }
+      };
+      client = await CodexClient.connect(
+        server.uri,
+        reconnectPolicy: const ReconnectPolicy(enabled: false),
+      );
+      final port = productionCodexPortForTesting(client!);
+      await port.openThread('thread-1');
+      server.request(
+        204,
+        'item/commandExecution/requestApproval',
+        <String, Object?>{
+          'threadId': 'thread-1',
+          'turnId': 'turn-1',
+          'itemId': 'item-1',
+        },
+      );
+      final pending = await port.snapshots.firstWhere(
+        (snapshot) => snapshot.approval != null,
+      );
+      final stalePrompt = pending.approval!;
+
+      final completed = port.snapshots.firstWhere(
+        (snapshot) =>
+            snapshot.runState == ThreadRunState.completed &&
+            snapshot.approval == null,
+      );
+      server.notify('turn/completed', <String, Object?>{
+        'threadId': 'thread-1',
+        'turn': <String, Object?>{
+          'id': 'turn-1',
+          'status': 'completed',
+          'items': <Object?>[],
+        },
+      });
+      await completed;
+      await port.decideApproval(stalePrompt, approved: true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_responsesFor(server, 204), isEmpty);
+
+      final turnTwoStarted = port.snapshots.firstWhere(
+        (snapshot) => snapshot.runState == ThreadRunState.running,
+      );
+      server.notify('turn/started', <String, Object?>{
+        'threadId': 'thread-1',
+        'turn': <String, Object?>{
+          'id': 'turn-2',
+          'status': 'inProgress',
+          'items': <Object?>[],
+        },
+      });
+      await turnTwoStarted;
+      server.request(206, 'item/fileChange/requestApproval', <String, Object?>{
+        'threadId': 'thread-1',
+        'turnId': 'turn-2',
+        'itemId': 'item-2',
+      });
+      final currentPrompt = (await port.snapshots.firstWhere(
+        (snapshot) => snapshot.approval != null,
+      )).approval;
+      server.notify('turn/completed', <String, Object?>{
+        'threadId': 'thread-1',
+        'turn': <String, Object?>{
+          'id': 'turn-1',
+          'status': 'completed',
+          'items': <Object?>[],
+        },
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(port.current.approval, same(currentPrompt));
+      expect(port.current.runState, ThreadRunState.waitingApproval);
+
+      final resolved = port.snapshots.firstWhere(
+        (snapshot) => snapshot.approval == null,
+      );
+      server.notify('serverRequest/resolved', <String, Object?>{
+        'threadId': 'thread-1',
+        'requestId': 206,
+      });
+      await resolved;
+      server.request(207, 'item/fileChange/requestApproval', <String, Object?>{
+        'threadId': 'thread-1',
+        'turnId': 'turn-2',
+        'itemId': 'item-3',
+      });
+      await port.snapshots.firstWhere((snapshot) => snapshot.approval != null);
+      final disconnected = port.snapshots.firstWhere(
+        (snapshot) => !snapshot.connected && snapshot.approval == null,
+      );
+      await server.closeConnections();
+      await disconnected;
+      await port.dispose();
+      client = null;
+    },
+  );
+
+  test(
+    'production port successful interrupt clears pending decisions',
+    () async {
+      server.handler = (message) {
+        switch (message.value['method']) {
+          case 'thread/read':
+            message.result(<String, Object?>{
+              'thread': <String, Object?>{
+                'id': 'thread-1',
+                'turns': <Object?>[
+                  <String, Object?>{
+                    'id': 'turn-1',
+                    'status': 'inProgress',
+                    'items': <Object?>[],
+                  },
+                ],
+              },
+            });
+          case 'thread/resume':
+            message.result(<String, Object?>{
+              'thread': <String, Object?>{
+                'id': 'thread-1',
+                'turns': <Object?>[],
+              },
+            });
+          case 'turn/interrupt':
+            message.result(<String, Object?>{});
+        }
+      };
+      client = await CodexClient.connect(
+        server.uri,
+        reconnectPolicy: const ReconnectPolicy(enabled: false),
+      );
+      final port = productionCodexPortForTesting(client!);
+      await port.openThread('thread-1');
+      server.request(205, 'item/tool/requestUserInput', <String, Object?>{
+        'threadId': 'thread-1',
+        'turnId': 'turn-1',
+        'itemId': 'item-1',
+        'questions': <Object?>[
+          <String, Object?>{'id': 'q', 'question': 'Continue?'},
+        ],
+      });
+      final staleInput = (await port.snapshots.firstWhere(
+        (snapshot) => snapshot.userInput != null,
+      )).userInput!;
+      server.request(
+        208,
+        'item/commandExecution/requestApproval',
+        <String, Object?>{
+          'threadId': 'thread-1',
+          'turnId': 'turn-1',
+          'itemId': 'item-2',
+        },
+      );
+      final staleApproval = (await port.snapshots.firstWhere(
+        (snapshot) => snapshot.approval != null,
+      )).approval!;
+
+      await port.interrupt();
+
+      expect(port.current.runState, ThreadRunState.idle);
+      expect(port.current.userInput, isNull);
+      expect(port.current.approval, isNull);
+      await port.answerUserInput(staleInput, const <String, List<String>>{
+        'q': <String>['old'],
+      });
+      await port.decideApproval(staleApproval, approved: true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(_responsesFor(server, 205), isEmpty);
+      expect(_responsesFor(server, 208), isEmpty);
+      await port.dispose();
+      client = null;
+    },
+  );
+
   test('uses 0.153.4 thread sandbox and explicit skill wire formats', () async {
     server.handler = (message) {
       switch (message.value['method']) {
@@ -576,3 +910,8 @@ Future<MockRpcMessage> _waitForResponse(MockAppServer server, Object id) async {
   }
   throw TimeoutException('Did not receive response $id');
 }
+
+Iterable<MockRpcMessage> _responsesFor(MockAppServer server, Object id) =>
+    server.received.where(
+      (message) => message.value['method'] == null && message.value['id'] == id,
+    );

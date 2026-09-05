@@ -473,8 +473,13 @@ class _PreviewCodexPort implements CodexPort, CodexNavigationPort {
   Future<void> selectModel(String model) async =>
       _emit(_current.copyWith(activeModel: model));
   @override
-  Future<void> interrupt() async =>
-      _emit(_current.copyWith(runState: ThreadRunState.idle));
+  Future<void> interrupt() async => _emit(
+    _current.copyWith(
+      runState: ThreadRunState.idle,
+      clearApproval: true,
+      clearUserInput: true,
+    ),
+  );
   @override
   Future<void> decideApproval(
     ApprovalPrompt prompt, {

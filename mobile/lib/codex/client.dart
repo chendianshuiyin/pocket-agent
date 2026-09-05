@@ -378,11 +378,15 @@ final class CodexClient {
     return jsonString(result['turnId']) ?? expectedTurnId;
   }
 
-  Future<void> interruptTurn(String threadId, String turnId) async {
+  Future<bool> interruptTurn(String threadId, String turnId) async {
+    final generation = _generation;
     await request('turn/interrupt', <String, Object?>{
       'threadId': threadId,
       'turnId': turnId,
     });
+    if (generation != _generation) return false;
+    _clearServerRequestsForTurn(threadId, turnId);
+    return true;
   }
 
   Future<List<SkillGroup>> listSkills({
@@ -423,7 +427,7 @@ final class CodexClient {
     );
   }
 
-  void respondApproval(ServerRequest request, ApprovalDecision decision) {
+  bool respondApproval(ServerRequest request, ApprovalDecision decision) {
     const methods = <String>{
       'item/commandExecution/requestApproval',
       'item/fileChange/requestApproval',
@@ -435,10 +439,12 @@ final class CodexClient {
         'Not a command or file approval request',
       );
     }
+    if (!_isCurrentServerRequest(request)) return false;
     respond(request.id, <String, Object?>{'decision': decision.wireValue});
+    return true;
   }
 
-  void respondUserInput(
+  bool respondUserInput(
     ServerRequest request,
     Map<String, List<String>> answers,
   ) {
@@ -450,15 +456,17 @@ final class CodexClient {
         'Not a user-input request',
       );
     }
+    if (!_isCurrentServerRequest(request)) return false;
     respond(request.id, <String, Object?>{
       'answers': answers.map(
         (questionId, values) =>
             MapEntry(questionId, <String, Object?>{'answers': values}),
       ),
     });
+    return true;
   }
 
-  void respondPermissions(
+  bool respondPermissions(
     ServerRequest request,
     JsonMap permissions, {
     String scope = 'turn',
@@ -470,18 +478,22 @@ final class CodexClient {
         'Not a permissions request',
       );
     }
+    if (!_isCurrentServerRequest(request)) return false;
     respond(request.id, <String, Object?>{
       'permissions': permissions,
       'scope': scope,
     });
+    return true;
   }
 
-  void rejectServerRequest(ServerRequest request, {String? message}) {
+  bool rejectServerRequest(ServerRequest request, {String? message}) {
+    if (!_isCurrentServerRequest(request)) return false;
     respondError(
       request.id,
       -32601,
       message ?? 'Unsupported server request: ${request.method}',
     );
+    return true;
   }
 
   Future<void> reconnect() async {
@@ -717,6 +729,9 @@ final class CodexClient {
       final turn = CodexTurn.fromJson(params['turn']);
       final threadId = jsonString(params['threadId']) ?? _activeThreadId ?? '';
       if (turn.id.isNotEmpty) {
+        if (notification.method == 'turn/completed') {
+          _clearServerRequestsForTurn(threadId, turn.id);
+        }
         _turnSnapshots.add(
           TurnSnapshot(
             threadId: threadId,
@@ -938,6 +953,22 @@ final class CodexClient {
   void _removeServerRequest(Object id) {
     _unresolvedServerRequests.remove(id);
     _serverRequests.removeWhere((request) => request.id == id);
+  }
+
+  bool _isCurrentServerRequest(ServerRequest request) =>
+      identical(_unresolvedServerRequests[request.id], request);
+
+  void _clearServerRequestsForTurn(String threadId, String turnId) {
+    final ids = _unresolvedServerRequests.entries
+        .where(
+          (entry) =>
+              entry.value.threadId == threadId && entry.value.turnId == turnId,
+        )
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final id in ids) {
+      _removeServerRequest(id);
+    }
   }
 
   void _clearServerRequests() {
