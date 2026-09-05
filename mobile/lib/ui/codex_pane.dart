@@ -16,13 +16,77 @@ class CodexPane extends StatefulWidget {
 class _CodexPaneState extends State<CodexPane> {
   final _composer = TextEditingController();
   final _scroll = ScrollController();
+  final Map<String, _ComposerDraft> _drafts = {};
   SkillChoice? _skill;
+  ServerWorkspace? _observedWorkspace;
+  CodexPort? _observedPort;
+  String? _composerThreadId;
+  int _contextGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _observeWorkspace(widget.workspace, resetDrafts: true);
+  }
+
+  @override
+  void didUpdateWidget(CodexPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.workspace == widget.workspace) return;
+    oldWidget.workspace.removeListener(_workspaceChanged);
+    _observeWorkspace(widget.workspace, resetDrafts: true);
+  }
 
   @override
   void dispose() {
+    widget.workspace.removeListener(_workspaceChanged);
     _composer.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _observeWorkspace(
+    ServerWorkspace workspace, {
+    required bool resetDrafts,
+  }) {
+    if (resetDrafts) {
+      _drafts.clear();
+      _composer.clear();
+      _skill = null;
+    }
+    _observedWorkspace = workspace;
+    _observedPort = workspace.codex;
+    _composerThreadId = workspace.codexSnapshot.activeThreadId;
+    _contextGeneration += 1;
+    workspace.addListener(_workspaceChanged);
+  }
+
+  void _workspaceChanged() {
+    if (!mounted || widget.workspace != _observedWorkspace) return;
+    final workspace = widget.workspace;
+    final portChanged = workspace.codex != _observedPort;
+    final nextThreadId = workspace.codexSnapshot.activeThreadId;
+    final threadChanged = nextThreadId != _composerThreadId;
+    if (!portChanged && !threadChanged) return;
+    if (threadChanged) _switchComposerThread(nextThreadId);
+    _observedPort = workspace.codex;
+    _contextGeneration += 1;
+    setState(() {});
+  }
+
+  void _switchComposerThread(String? nextThreadId) {
+    final previousThreadId = _composerThreadId;
+    if (previousThreadId != null) {
+      _drafts[previousThreadId] = _ComposerDraft(_composer.text, _skill);
+    }
+    _composerThreadId = nextThreadId;
+    final draft = nextThreadId == null ? null : _drafts[nextThreadId];
+    final text = draft?.text ?? '';
+    _composer.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _skill = draft?.skill;
   }
 
   @override
@@ -190,20 +254,25 @@ class _CodexPaneState extends State<CodexPane> {
                       decoration: InputDecoration(
                         hintText: running ? '任务运行中…' : '给 Codex 发送消息',
                         suffixIcon: running
-                            ? IconButton(
-                                tooltip: '中断任务',
-                                onPressed: widget.workspace.codex!.interrupt,
-                                icon: const Icon(Icons.stop_circle_outlined),
-                              )
+                            ? null
                             : IconButton.filled(
                                 tooltip: '发送',
                                 onPressed: _send,
                                 icon: const Icon(Icons.arrow_upward_rounded),
                               ),
                       ),
-                      onSubmitted: (_) => _send(),
+                      onSubmitted: running ? null : (_) => _send(),
                     ),
                   ),
+                  if (running) ...[
+                    const SizedBox(width: PocketSpacing.xs),
+                    IconButton.filledTonal(
+                      key: const ValueKey('codex-interrupt'),
+                      tooltip: '中断任务',
+                      onPressed: widget.workspace.codex!.interrupt,
+                      icon: const Icon(Icons.stop_circle_outlined),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -214,16 +283,44 @@ class _CodexPaneState extends State<CodexPane> {
   }
 
   Future<void> _send() async {
+    if (!mounted) return;
+    final workspace = widget.workspace;
+    final port = workspace.codex;
+    final snapshot = workspace.codexSnapshot;
+    final threadId = snapshot.activeThreadId;
+    final runState = snapshot.runState;
+    if (workspace != _observedWorkspace ||
+        port == null ||
+        port != _observedPort ||
+        threadId == null ||
+        threadId != _composerThreadId ||
+        !snapshot.connected ||
+        snapshot.loading ||
+        runState == ThreadRunState.running ||
+        runState == ThreadRunState.waitingApproval) {
+      return;
+    }
     final text = _composer.text.trim();
     if (text.isEmpty && _skill == null) return;
     _composer.clear();
     final skill = _skill;
     setState(() => _skill = null);
-    await widget.workspace.codex!.send(text, skill: skill);
+    _drafts[threadId] = const _ComposerDraft('', null);
+    await port.send(text, skill: skill);
   }
 
   Future<void> _openActions() async {
-    final snapshot = widget.workspace.codexSnapshot;
+    final startWorkspace = widget.workspace;
+    final startPort = startWorkspace.codex;
+    final snapshot = startWorkspace.codexSnapshot;
+    final startThreadId = snapshot.activeThreadId;
+    final startGeneration = _contextGeneration;
+    if (startPort == null ||
+        startThreadId == null ||
+        !snapshot.connected ||
+        snapshot.loading) {
+      return;
+    }
     final choice = await showModalBottomSheet<Object>(
       context: context,
       showDragHandle: true,
@@ -290,11 +387,33 @@ class _CodexPaneState extends State<CodexPane> {
         ),
       ),
     );
+    final currentSnapshot = startWorkspace.codexSnapshot;
+    if (!mounted ||
+        widget.workspace != startWorkspace ||
+        startWorkspace != _observedWorkspace ||
+        startWorkspace.codex != startPort ||
+        startPort != _observedPort ||
+        currentSnapshot.activeThreadId != startThreadId ||
+        !currentSnapshot.connected ||
+        currentSnapshot.loading ||
+        currentSnapshot.runState == ThreadRunState.running ||
+        currentSnapshot.runState == ThreadRunState.waitingApproval ||
+        _composerThreadId != startThreadId ||
+        _contextGeneration != startGeneration) {
+      return;
+    }
     if (choice is SkillChoice) setState(() => _skill = choice);
     if (choice is String) {
-      await widget.workspace.codex!.runCommand(choice);
+      await startPort.runCommand(choice);
     }
   }
+}
+
+class _ComposerDraft {
+  const _ComposerDraft(this.text, this.skill);
+
+  final String text;
+  final SkillChoice? skill;
 }
 
 class _ThreadList extends StatelessWidget {
