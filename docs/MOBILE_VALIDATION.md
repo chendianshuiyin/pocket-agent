@@ -1,6 +1,9 @@
 # Pocket Agent 移动端验证记录
 
-日期：2026-09-05。状态：开发验证中，不是上线或商店发布声明。
+日期：2026-09-06。状态：个人测试版已完成本轮真实模型与 Android 验证，不是上线或商店发布声明。
+
+当前结论以“当前证据”和“2026-09-06 真实模型验收”两节为准。下方带旧源码基线、
+旧包名的记录保留历史过程，其中的登录阻塞已在本轮解除。
 
 ## 环境与范围
 
@@ -14,24 +17,63 @@
 
 | 验证项 | 结果与边界 |
 | --- | --- |
-| 静态检查与本地测试 | 主模型复跑 `flutter analyze` 无问题；`flutter test test tool/workspace_preview_test.dart tool/remote_login_test.dart`：118 通过（含连接认证、隔离预览和设备登录安全测试）、6 个显式 live 测试跳过，跳过不计成功 |
+| 静态检查与本地测试 | 主模型复跑全项目 `flutter analyze` 无问题；完整本地套件加预览、登录和两个只读探针：130 通过、8 个显式 live 用例因无 fixture 跳过，跳过不计成功 |
 | 多服务器隔离 | 新增并由主模型复跑 7 项回归测试：同时连接、切换视图、同名 tmux、后台事件、编辑、删除与全局关闭；fake transport 验证客户端隔离，不冒充多台真实 VPS 并发测试 |
 | 验证脚本异常清理 | 主模型复跑 27 个 Python 测试通过，包含认证文件部分写入失败、目录与 token 归属、runtime 启动后失败、本地 fixture 清理与 tmux 窗格归属校验，以及隔离 WebSocket 探针 |
 | SSH 真实连接 | 已验证主机 pin 拒绝错误指纹、PTY 输入/输出/resize、tmux 断开重接 |
 | 真实 app-server 传输 | 已验证 SSH forward、WebSocket initialize 和 model/thread RPC；本轮新增真实缺失/错误/正确 capability token 的 401/401/101 探针，不再用 `/readyz` 200 代替认证 |
 | 无登录真实链路 | 本轮新认证实现下 `live_ssh_vps_test.dart` 通过：生产 runtime 认证探针与 `readAccount=signedOut`；未上传账号凭据、未发送模型请求 |
-| 真实模型回复 | 尚未通过：服务返回 refresh token revoked；不是模型成功回复 |
-| 官方设备登录 | 真实 app-server 已成功返回设备登录请求；浏览器到达官方账号选择页，但控制连接失败，登录等待超时。随后真实 `account/logout` 与 `account/read` 验证 `authenticated=false`；不能算登录或模型验证成功 |
-| 执行中断线恢复、真实 interrupt | 测试代码已编写，尚待有效登录完成实测 |
-| 审批/用户输入 | 模拟协议与真实生产 Port 测试验证：任务结束/中断/断线使旧请求失效，重连复用 request id 不能让旧对象批准新请求，resolved 通知清理当前提示；widget 测试验证全文和表单。尚未通过真实远端模型完整流程 |
+| 真实模型回复 | `live_vps_test.dart` 真实通过：只检查对应 turn 的 `agentMessage.text`，任务列表能找到新任务，重连后恢复同一 turn 的模型回复；不再把 user prompt 中的标记当成功 |
+| 官方设备登录 | 新设备登录请求完成后真实 `account/read` 确认 `authenticated=true`，随后真实模型请求成功；本轮未读取或上传本机 auth 缓存。结束后显式注销并确认 `authenticated=false` |
+| 执行中断线恢复、真实 interrupt | 两项真实通过：断开前核验目标 thread/turn/item 的预期 sleep 命令仍在执行；关闭 RPC、隧道和 SSH 后重新连接，同一 turn 完成且实际命令输出、退出码正确。interrupt 取得真实 `interrupted` 终态 |
+| 审批/用户输入 | 真实 command approval 全流程通过：有限 allowlist、resolved、对应命令完成/exit 0/精确输出及 turn 完成。用户输入表单、过期请求与连接隔离仍是 mock/生产 Port/widget 证据，未宣称真实模型主动请求用户输入已验证 |
 | Android 构建安装 | debug 与 `flutter build apk --release --split-per-abi` 均成功；x86_64 release-mode APK 安装后前台进程、首页和添加服务器导航正常，未见应用错误日志；ARM64 APK 的 manifest、ABI、APK v2 signature 已核查，但尚未在 ARM64 真机运行 |
 | Android 真实 SSH 工作流 | 本轮新认证实现下 `app_ssh_vps_test.dart` 使用真实 VPS 完整复跑通过：命令、分段中文、创建 tmux、完整客户端重建、恢复同一终端内的环境变量、真实 Codex 初始化与未登录提示。输入通过 xterm 的 TextInputClient 测试通道驱动，不是物理键盘测试 |
-| Android 真实模型工作流 | 尚待有效登录；`app_vps_test.dart` 的 skipped integration 不算通过 |
+| Android 真实模型工作流 | `app_vps_test.dart` 在模拟器真实通过：SSH 命令、选择模型、唯一标记的模型回复、任务刷新、历史打开、命令/技能菜单可见、完整客户端重建后找到同一任务；不等同于真实 skill 执行或 ARM64 真机验证 |
 | 四屏视觉 | 首页与连接设置完成两轮 Android 独立评审；第二轮质量/原创/工艺/功能为 7/6/7/8。SSH 与 Codex 完成两轮独立评审，第二轮分别为 6/6/7/7 与 7/6/8/6；大字体、明暗主题、键盘、审批全文和必填反馈均实际检查，整体仍需迭代，不代表用户已确认最终视觉 |
 | App icon | 耳机版已被否定，当前使用无耳机银白发 v2，已接入 Android legacy/adaptive 与 iOS AppIcon；主模型通过资源校验和 Android 实装圆形桌面图标、点击启动检查。仍是当前迭代，不代表用户已定稿或所有 OEM/iOS 外框已验证 |
-| 远端凭据清理 | 已停止授权与后续无认证测试 runtime；检查隔离目录、SSH 用户标准目录与 root 标准目录的 auth 文件不存在；删除临时本地 fixture 票据、撤销 adb reverse；本机 auth 未删除 |
+| 远端凭据清理 | 本轮真实注销后停止隔离 runtime；独立 SSH 核查隔离、SSH 用户及 root 的 auth 文件均不存在，transport token/owner marker 不存在；本地 fixture 已删除、18089 无监听、adb reverse 已撤销。本机 auth 未修改 |
 
 本记录区分单元测试、模拟服务、真实 SSH、真实模型与设备验证，任何一项不能替代另一项。
+
+### 2026-09-06 真实模型验收
+
+使用此前的 `--without-codex-auth` 隔离 fixture 创建新的设备登录请求，完成后真实
+RPC 返回已认证；该 runtime 随后是已登录测试环境，不再称为 signed-out。浏览器
+自动化连接仍曾失败，不能把最终登录成功描述为已修复全部内置浏览器或代理问题。
+
+真实基础测试首先发现列表缺失。只读探针比较 cwd 有/无、`appServer`、`cli/vscode`
+及全部官方来源，三个新建任务均为 `source=vscode`、`ephemeral=false`，cwd 精确
+匹配；`appServer` 单独过滤返回零项。`ec3a7c3` 最小兼容 `appServer + vscode`，
+随后基础测试通过。来源字段不是任务所有权，边界见运维说明。
+
+恢复与中断测试增加了真实执行证据检查。安全只读探针确认当前 runtime 的命令
+展示为 `/bin/bash -lc` 包装，内部反斜杠双写；仅把这一完整精确形式加入 allowlist，
+追加命令、缺少 sleep、提前完成、错误 thread/turn/item 仍被拒绝。最终
+`live_codex_recovery_test.dart` 与 `live_codex_approval_test.dart` 串行运行 6 项通过，
+其中 3 项真实远端、3 项本地审批 guard/mock。重连时任务可以仍运行或已完成，
+但必须证明断开前确实执行中，并恢复原 turn 的真实结果。
+
+Android 首次重跑暴露测试点到了加载中禁用的按钮；第二次任务已成功但旧测试精确
+匹配“已完成”，漏掉带模型名的状态栏。修正为等待控件可操作、以稳定 status key
+识别终态，并使用每轮唯一的回复标记避免选到旧任务。第三次完整 UI 流程 1 项通过。
+测试使用 `--no-uninstall` 和临时 build number 4004，保留数据安装；pubspec 已恢复。
+
+测试结束后 `remote_login_test.dart` 显式 logout 6 项通过（5 本地 + 1 真实 RPC），
+返回 `authenticated=false`；`/finish` 返回 204，helper 正常退出并确认 runtime 与
+transport token 清理。独立 SSH 再次核查隔离、用户、root 认证与 token/owner 均不存在。
+未将 SSH 密码、账号 token 或设备登录 code 写入提交或本报告。
+
+本轮主模型复跑：
+
+```sh
+flutter analyze
+flutter test test tool/workspace_preview_test.dart tool/remote_login_test.dart tool/thread_list_probe_test.dart tool/command_shape_probe_test.dart --reporter expanded
+```
+
+结果为无静态问题、130 通过 / 8 live 跳过；Python 验证脚本 27 项通过。未验证
+iOS 构建/真机、Android ARM64 真机及多台真实 VPS 同时在线；多服务器隔离有本地
+回归证据。商店签名、平台隐私申报和真实设备验收仍按平台交付清单执行。
 
 此前普通 Android debug APK 已构建、安装并启动。旧基线 `7ecb30a` 的独立副本位于被忽略的
 `artifacts/Pocket-Agent-0.3.0-android-debug.apk`，SHA-256：
@@ -47,7 +89,26 @@ target API 36，ARM64 versionCode 2001；x86_64 split 为 4001。切换 split/un
 测试包时须注意版本号，不能因降级被拒就自动卸载用户数据。
 正式签名与 iOS 的逐项验证要求见 [平台交付基线](MOBILE_PLATFORMS.md)。
 
-### 当前连接认证修复测试包
+### 当前个人测试包（v5）
+
+源码基线 `cbddba9`，含 `ec3a7c3` 的任务列表修复。主模型执行
+`flutter build apk --release --split-per-abi --build-number=5`，三个 ABI 全部成功。
+ARM64 独立副本为 `artifacts/Pocket-Agent-0.3.0-android-arm64-verified-v5.apk`，
+21,331,203 bytes，SHA-256：
+`7a7666067da06c4145b00d753a6a7c91d29d13eb0cb776e2c0abdf4ddddbe469`。
+
+普通 `lib/main.dart` 入口，保留无耳机 v2 图标。ARM64 versionCode 2005，
+min API 24、target API 36；APK v2 signature 有效，仍为 Android Debug certificate，
+不是商店签名包。文件名的 verified 指本轮验证过的源码，不代表 ARM64 真机已测试。
+
+模拟器通过 `adb install -r` 恢复普通 x86_64 release-mode APK，versionCode 4005。
+本轮测试前后 firstInstallTime 均为 `2026-09-05 09:25:34`，没有卸载或清除数据；
+验证结束已删除测试用服务器配置。主模型检查正常空首页、添加服务器表单、返回与
+进程存活，定向日志未见崩溃、Unhandled Exception 或布局溢出。ignored 证据为
+`pocket-v5-main.xml`、`pocket-v5-main.jpg` 和 `pocket-v5-add-server.xml`。
+旧包均保留；iOS 与 ARM64 真机验证边界不变。
+
+### 历史连接认证修复测试包（v4）
 
 生产源码基线 `d6e62ea`，验证辅助工具后续提交为 `9a1e84c`。主模型执行
 `flutter build apk --release --split-per-abi --build-number=4`，三个 ABI 全部成功。
@@ -179,7 +240,7 @@ SSH/Codex 第三轮仅做定向功能复核：默认和 1.6× 字体的 active t
 `turn/interrupt` 的空响应确认请求成功，最终状态由 `turn/completed` 给出；
 审批按 thread/turn 归属，`serverRequest/resolved` 表示请求已回答或清理。
 
-### 真实模型验证的剩余条件
+### 历史登录阻塞（2026-09-05，本轮已解除）
 
 此前真实 turn 返回 `authentication_refresh_revoked`。继续验证前需要完成新的
 Codex 登录；重复复制原失效缓存不能视作解决。用户已授权主模型代办官方登录，
