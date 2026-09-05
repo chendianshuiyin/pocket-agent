@@ -43,8 +43,11 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256
 - 暂时无法完成健康检查时不会自动杀掉已有 runtime；恢复网络后手动重连。
 - 服务器重启、用户注销策略杀掉进程、tmux 被终止，与手机断网不同。首版不
   承诺跨服务器重启继续执行同一进程；可恢复的任务历史仍保存在远端 Codex 中。
-- 不接管另一个独立 Codex CLI 进程的正在执行状态。原生 Codex TUI 可在 SSH
-  终端使用，App 的结构化任务由其连接的 app-server 管理。
+- 任务列表中的 `appServer` / `vscode` 来源过滤用于兼容 Codex 协议元数据，不是
+  Pocket 所有权标记；同一 SSH 用户、同一 `CODEX_HOME` 中符合 cwd 条件的兼容
+  来源历史可能可见，不能据此宣称历史仅由 Pocket 创建。
+- 历史可见不表示接管另一个独立 Codex CLI 进程的正在执行状态。原生 Codex TUI
+  可在 SSH 终端使用；App 只管理其连接的 app-server 所提供的结构化交互状态。
 
 ## 安全与发行边界
 

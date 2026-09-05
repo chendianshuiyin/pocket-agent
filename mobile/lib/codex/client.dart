@@ -215,7 +215,9 @@ final class CodexClient {
         if (searchTerm != null) 'searchTerm': searchTerm,
         'sortKey': sortKey,
         'sortDirection': sortDirection,
-        'sourceKinds': <String>['appServer'],
+        // Codex 0.153.4 may label app-server-created threads as `vscode`.
+        // Source kind is protocol-origin metadata, not an ownership boundary.
+        'sourceKinds': <String>['appServer', 'vscode'],
       }),
     );
     return Page<CodexThread>(

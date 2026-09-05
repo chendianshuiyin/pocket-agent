@@ -24,17 +24,20 @@ void main() {
   });
 
   test(
-    'performs initialize handshake and explicitly lists appServer threads',
+    'performs initialize handshake and lists vscode-compatible threads',
     () async {
       server.handler = (message) {
         if (message.value['method'] == 'thread/list') {
           final params = message.value['params']! as Map;
-          expect(params['sourceKinds'], <String>['appServer']);
+          expect(params['sourceKinds'], <String>['appServer', 'vscode']);
+          expect(params['cwd'], '/fixture');
           message.result(<String, Object?>{
             'data': <Object?>[
               <String, Object?>{
                 'id': 'thread-1',
                 'preview': 'Hello',
+                'source': 'vscode',
+                'cwd': '/fixture',
                 'turns': <Object?>[],
               },
             ],
@@ -57,8 +60,10 @@ void main() {
         ),
       );
 
-      final page = await client!.listThreads();
+      final page = await client!.listThreads(cwd: '/fixture');
       expect(page.data.single.id, 'thread-1');
+      expect(page.data.single.raw['source'], 'vscode');
+      expect(page.data.single.cwd, '/fixture');
       await server.waitFor('initialized');
       expect(
         server.received.take(3).map((message) => message.value['method']),
