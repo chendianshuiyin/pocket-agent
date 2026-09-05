@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
@@ -204,85 +206,193 @@ Future<void> _attachPersistentFromEmpty(
   if (id != null) await workspace.attachPersistentShell(id);
 }
 
-class _TerminalTabs extends StatelessWidget {
+class _TerminalTabs extends StatefulWidget {
   const _TerminalTabs({required this.workspace});
   final ServerWorkspace workspace;
+
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 58,
-    child: DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerLowest,
-        border: Border(
-          bottom: BorderSide(
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(
-                horizontal: PocketSpacing.xs,
-                vertical: PocketSpacing.xs,
-              ),
-              scrollDirection: Axis.horizontal,
-              itemCount: workspace.terminals.length,
-              separatorBuilder: (_, _) =>
-                  const SizedBox(width: PocketSpacing.xs),
-              itemBuilder: (context, index) {
-                final terminal = workspace.terminals[index];
-                final selected = workspace.selectedTerminal == index;
-                return InputChip(
-                  selected: selected,
-                  avatar: Icon(
-                    terminal.persistent
-                        ? Icons.push_pin_outlined
-                        : Icons.terminal_rounded,
-                    size: 16,
-                  ),
-                  label: Text(terminal.title),
-                  onPressed: () => workspace.selectTerminal(index),
-                  onDeleted: () => _close(context, index),
-                );
-              },
+  State<_TerminalTabs> createState() => _TerminalTabsState();
+}
+
+class _TerminalTabsState extends State<_TerminalTabs> {
+  static const _tabWidth = 144.0;
+  static const _tabSpacing = PocketSpacing.xs;
+  final _scrollController = ScrollController();
+  int _lastTerminalCount = -1;
+  int _lastSelectedTerminal = -1;
+  double _lastViewportWidth = -1;
+
+  ServerWorkspace get workspace => widget.workspace;
+
+  @override
+  void didUpdateWidget(covariant _TerminalTabs oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.workspace != widget.workspace) {
+      _lastTerminalCount = -1;
+      _lastSelectedTerminal = -1;
+      _lastViewportWidth = -1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _ensureSelectedVisible(double viewportWidth) {
+    final count = workspace.terminals.length;
+    final selected = workspace.selectedTerminal;
+    if (count == _lastTerminalCount &&
+        selected == _lastSelectedTerminal &&
+        (viewportWidth - _lastViewportWidth).abs() < 0.5) {
+      return;
+    }
+    _lastTerminalCount = count;
+    _lastSelectedTerminal = selected;
+    _lastViewportWidth = viewportWidth;
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients || count == 0) return;
+      if (workspace.terminals.length != count ||
+          workspace.selectedTerminal != selected) {
+        return;
+      }
+      final position = _scrollController.position;
+      final leading = PocketSpacing.xs + selected * (_tabWidth + _tabSpacing);
+      final trailing = leading + _tabWidth;
+      var target = position.pixels;
+      if (leading < position.pixels) {
+        target = leading;
+      } else if (trailing > position.pixels + position.viewportDimension) {
+        target = trailing - position.viewportDimension;
+      }
+      target = target.clamp(position.minScrollExtent, position.maxScrollExtent);
+      if ((target - position.pixels).abs() < 0.5) return;
+      if (disableAnimations) {
+        _scrollController.jumpTo(target);
+        return;
+      }
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chipHeight = math.max(
+      48.0,
+      MediaQuery.textScalerOf(context).scale(17) + 16,
+    );
+    return SizedBox(
+      height: chipHeight + PocketSpacing.md,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLowest,
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).colorScheme.outlineVariant,
             ),
           ),
-          IconButton(
-            tooltip: '新建终端',
-            onPressed: workspace.busy ? null : workspace.openTerminal,
-            icon: const Icon(Icons.add_rounded),
-          ),
-          PopupMenuButton<String>(
-            tooltip: '持久终端',
-            icon: const Icon(Icons.push_pin_outlined),
-            onSelected: (value) => value == 'create'
-                ? _createPersistent(context)
-                : _attachPersistent(context),
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: 'create',
-                child: ListTile(
-                  leading: Icon(Icons.add_box_outlined),
-                  title: Text('新建持久终端'),
-                  contentPadding: EdgeInsets.zero,
-                ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  _ensureSelectedVisible(constraints.maxWidth);
+                  return ListView.builder(
+                    key: const ValueKey('terminal-tabs-scroll'),
+                    controller: _scrollController,
+                    itemExtent: _tabWidth + _tabSpacing,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: PocketSpacing.xs,
+                      vertical: PocketSpacing.xs,
+                    ),
+                    scrollDirection: Axis.horizontal,
+                    itemCount: workspace.terminals.length,
+                    itemBuilder: (context, index) {
+                      final terminal = workspace.terminals[index];
+                      final selected = workspace.selectedTerminal == index;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: _tabSpacing),
+                        child: SizedBox(
+                          key: ValueKey('terminal-tab-slot-${terminal.id}'),
+                          width: _tabWidth,
+                          height: chipHeight,
+                          child: Tooltip(
+                            message: terminal.title,
+                            child: InputChip(
+                              key: ValueKey('terminal-tab-${terminal.id}'),
+                              selected: selected,
+                              avatar: Icon(
+                                terminal.persistent
+                                    ? Icons.push_pin_outlined
+                                    : Icons.terminal_rounded,
+                                size: 16,
+                              ),
+                              label: Text(
+                                terminal.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onPressed: () {
+                                workspace.selectTerminal(index);
+                                setState(() {});
+                              },
+                              onDeleted: () => _close(context, index),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
               ),
-              PopupMenuItem(
-                value: 'attach',
-                child: ListTile(
-                  leading: Icon(Icons.link_rounded),
-                  title: Text('附加已有终端'),
-                  contentPadding: EdgeInsets.zero,
+            ),
+            IconButton(
+              tooltip: '新建终端',
+              onPressed: workspace.busy
+                  ? null
+                  : () async {
+                      await workspace.openTerminal();
+                      if (mounted) setState(() {});
+                    },
+              icon: const Icon(Icons.add_rounded),
+            ),
+            PopupMenuButton<String>(
+              tooltip: '持久终端',
+              icon: const Icon(Icons.push_pin_outlined),
+              onSelected: (value) => value == 'create'
+                  ? _createPersistent(context)
+                  : _attachPersistent(context),
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'create',
+                  child: ListTile(
+                    leading: Icon(Icons.add_box_outlined),
+                    title: Text('新建持久终端'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+                PopupMenuItem(
+                  value: 'attach',
+                  child: ListTile(
+                    leading: Icon(Icons.link_rounded),
+                    title: Text('附加已有终端'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Future<void> _close(BuildContext context, int index) async {
     final terminal = workspace.terminals[index];
@@ -305,7 +415,10 @@ class _TerminalTabs extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed == true) await workspace.closeTerminal(index);
+    if (confirmed == true) {
+      await workspace.closeTerminal(index);
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _createPersistent(BuildContext context) async {
@@ -342,7 +455,10 @@ class _TerminalTabs extends StatelessWidget {
         ],
       ),
     );
-    if (id != null) await workspace.openTerminal(persistent: true, id: id);
+    if (id != null) {
+      await workspace.openTerminal(persistent: true, id: id);
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _attachPersistent(BuildContext context) async {
@@ -374,7 +490,10 @@ class _TerminalTabs extends StatelessWidget {
         ),
       ),
     );
-    if (id != null) await workspace.attachPersistentShell(id);
+    if (id != null) {
+      await workspace.attachPersistentShell(id);
+      if (mounted) setState(() {});
+    }
   }
 }
 
