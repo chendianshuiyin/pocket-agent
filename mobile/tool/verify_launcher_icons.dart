@@ -4,9 +4,9 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
-const _sourcePath = 'assets/brand/agent-portrait-candidate.png';
+const _sourcePath = 'assets/brand/agent-portrait-owl-v2.png';
 const _sourceSha256 =
-    '33fe04a8538f297de60ced7e1e29900848f3247bbf5cb178c99aec2bbcf098d9';
+    '67afb98da7f5ebbad5a9d3f7f2a90a3d166350ba6acbebc40e1c8899b41ce2a3';
 
 void main() {
   final failures = <String>[];

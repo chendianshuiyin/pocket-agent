@@ -30,20 +30,28 @@ Flutter 自绘材质不等同于原生 Apple Liquid Glass。
 仅借鉴角色头像式构图及绘画表现，不复制阿米娅或其他角色、阵营徽记、官方 logo。
 
 - `mobile/assets/brand/portrait-study.png`：用户认可的画风基准；身份辨识尚不足。
-- `mobile/assets/brand/agent-portrait-candidate.png`：保留角色与画风，加入轻量耳侧通信模块；
-  作为当前可更换的 launcher 候选接入 Android/iOS，仍待用户确认 Agent 身份表达，
-  不宣称已定稿。原始画面未重绘、未改动。
+- `mobile/assets/brand/agent-portrait-candidate.png`：带轻量耳侧通信模块的上一轮候选；
+  耳机方向已被用户否定，文件仅作为迭代历史保留，不再用于 launcher。
+- `mobile/assets/brand/agent-portrait-owl-v2.png`：当前 launcher 候选。采用原创银白发、
+  琥珀眼和羽状发束，不带耳机；只借鉴白面鸮沉静、可靠的助手气质，不复制其角色设计。
+  本轮接入用于继续评估，不代表用户已经定稿。
+
+本次只替换 Android/iOS launcher 资源，不改变应用界面、功能或既有 UI 方向。
 
 图片通过内置 image_gen 生成/编辑，无 CLI/API fallback。原始输出保留于 Codex
-generated_images，项目副本已保存于仓库。被否定的旧草案不复制进项目。
+generated_images，项目副本已保存于仓库。被否定的 Q 版/猫机器人草案不复制进项目；
+已接入过的耳机版只保留为可追溯的迭代历史。
 
-### 头像生成 prompt
+当前无耳机版的完整 prompt、生成方式和源文件校验见
+[无耳机头像 v2 生成记录](ICON_OWL_V2_PROMPT.md)。以下保留早期迭代记录。
+
+### 初版头像生成 prompt
 
 ```text
 Use case: stylized-concept. Asset type: one square mobile APP ICON portrait concept for Pocket Agent. The user's reference is the CHARACTER-PORTRAIT APP ICON of Arknights, specifically its polished anime illustration and tightly cropped face, NOT its interface, faction emblems, logos or game HUD. Create a wholly original adult anime character: a composed young adult female engineer with a short ash-grey bob, a few loosely layered strands across the forehead, clear cool blue-grey eyes, and a very slight, natural closed-mouth smile. Her expression is attentive, intelligent and approachable, never vacant, exaggerated or babyish. Normal adult anime facial proportions, a defined jaw and visible neck; medium-small eyes with subtle iris highlights, NOT enormous doll eyes or chibi proportions. A simple dark jacket collar with a restrained cobalt lining is barely visible at the bottom. Style: premium hand-painted anime game key art adapted for an app icon, confident fine linework, carefully designed broad cel-shadow shapes combined with subtle painterly light, natural skin tones, cool reflected light in hair, sophisticated restrained saturation. Composition: close-cropped face and partial shoulders, slight three-quarter turn while looking toward viewer; face readable in the central circular safe area; strong dark/light silhouette. Full-bleed opaque slate-blue background with a quiet pale-grey light area behind the hair, no scenery. No rounded outer mask. No text, letters, badges, UI, command symbols, animal ears, headphones, robots, pocket props, childish smile, cheek blush circles, sparkles, glossy 3D, plush texture, emoji aesthetic or existing franchise characters. This is a carefully illustrated character avatar icon, not a mascot toy or sticker. Deliver one actual square image only.
 ```
 
-### Agent 身份编辑 prompt
+### 已否定的耳机版编辑 prompt
 
 ```text
 Use case: precise-object-edit. Image 1 is the edit target: the user likes this portrait's face and mature anime illustration style for the Pocket Agent app icon, but it needs a clearer identity as a capable connected Agent. Change ONLY the visible ear area on the viewer's left: add one distinctive lightweight communication earpiece, elegantly fitted over the ear and partly tucked under the hair, with a short, fine microphone stem following the cheek contour but not reaching the mouth. The earpiece has a recognizable folded-pocket silhouette: a compact asymmetric rounded trapezoid, one folded upper lip, dark graphite housing, one restrained cobalt-blue edge and a tiny cool-blue status light. It is a sophisticated wearable companion link, not bulky gaming headphones, not a metal helmet. Make the design clear enough to read at app-icon size without dominating the face. Preserve exactly the same character identity, normal adult facial proportions, ash-grey hair, blue-grey eyes, small composed smile, head angle, collar, painterly linework, muted lighting and full-bleed opaque slate background. Do not add other props, UI overlays, text, letters, code symbols, chest badges, glow effects or decorative shapes. No chibi, blush dots, giant eyes, plastic 3D, animals or third-party logos. The result should feel like the same person now available as a calm, capable remote-working partner. One actual square app icon, no presentation board.
@@ -53,8 +61,8 @@ Use case: precise-object-edit. Image 1 is the edit target: the user likes this p
 
 通过 `mobile/flutter_launcher_icons.yaml` 和固定版本生成器导出 Android/iOS 资源，
 让候选可在真实 launcher 上评估。生成器只进行标准资源缩放和格式转换，不改变
-原始角色设计；源文件 SHA-256 为
-`33fe04a8538f297de60ced7e1e29900848f3247bbf5cb178c99aec2bbcf098d9`。
+原始角色设计；当前源文件 SHA-256 为
+`67afb98da7f5ebbad5a9d3f7f2a90a3d166350ba6acbebc40e1c8899b41ce2a3`。
 
 ```sh
 cd mobile
