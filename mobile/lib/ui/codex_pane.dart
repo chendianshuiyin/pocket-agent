@@ -780,7 +780,10 @@ class _Conversation extends StatelessWidget {
               ),
       ),
       if (snapshot.approval != null)
-        _ApprovalCard(prompt: snapshot.approval!, port: port),
+        Flexible(
+          flex: 2,
+          child: _ApprovalCard(prompt: snapshot.approval!, port: port),
+        ),
       if (snapshot.userInput != null)
         _UserInputCard(prompt: snapshot.userInput!, port: port),
       composer,
@@ -890,7 +893,7 @@ class _ApprovalCard extends StatelessWidget {
         PocketSpacing.sm,
         PocketSpacing.xxs,
       ),
-      padding: const EdgeInsets.all(PocketSpacing.sm),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: highContrast
             ? theme.colorScheme.surfaceContainerLowest
@@ -898,41 +901,100 @@ class _ApprovalCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(PocketRadii.md),
         border: Border.all(color: warning, width: highContrast ? 1.5 : 1),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: Scrollbar(
+        child: SingleChildScrollView(
+          key: const ValueKey('approval-card-scroll'),
+          padding: const EdgeInsets.all(PocketSpacing.sm),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.gpp_maybe_outlined, color: warning),
-              const SizedBox(width: PocketSpacing.xs),
-              Expanded(
-                child: Text(prompt.title, style: theme.textTheme.titleMedium),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.gpp_maybe_outlined, color: warning),
+                  const SizedBox(width: PocketSpacing.xs),
+                  Expanded(
+                    child: Text(
+                      prompt.title,
+                      style: theme.textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: PocketSpacing.xs),
+              Text(
+                prompt.details,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: PocketSpacing.sm),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: PocketSpacing.xs,
+                runSpacing: PocketSpacing.xs,
+                children: [
+                  TextButton.icon(
+                    key: const ValueKey('view-approval-details'),
+                    onPressed: () => _showApprovalDetails(context, prompt),
+                    icon: const Icon(Icons.open_in_full_rounded),
+                    label: const Text('查看完整内容'),
+                  ),
+                  TextButton(
+                    onPressed: () =>
+                        port.decideApproval(prompt, approved: false),
+                    child: const Text('拒绝'),
+                  ),
+                  FilledButton(
+                    onPressed: () =>
+                        port.decideApproval(prompt, approved: true),
+                    child: const Text('允许一次'),
+                  ),
+                ],
               ),
             ],
           ),
-          const SizedBox(height: PocketSpacing.xs),
-          Text(prompt.details, maxLines: 4, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: PocketSpacing.sm),
-          Wrap(
-            alignment: WrapAlignment.end,
-            spacing: PocketSpacing.xs,
-            runSpacing: PocketSpacing.xs,
-            children: [
-              TextButton(
-                onPressed: () => port.decideApproval(prompt, approved: false),
-                child: const Text('拒绝'),
-              ),
-              FilledButton(
-                onPressed: () => port.decideApproval(prompt, approved: true),
-                child: const Text('允许一次'),
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
+}
+
+Future<void> _showApprovalDetails(
+  BuildContext context,
+  ApprovalPrompt prompt,
+) => showDialog<void>(
+  context: context,
+  builder: (dialogContext) => AlertDialog(
+    title: Text(prompt.title),
+    content: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: 560,
+        maxHeight: _dialogContentMaxHeight(dialogContext),
+      ),
+      child: Scrollbar(
+        child: SingleChildScrollView(
+          key: const ValueKey('approval-details-scroll'),
+          child: SelectableText(
+            prompt.details,
+            key: const ValueKey('approval-details-full'),
+          ),
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        key: const ValueKey('close-approval-details'),
+        onPressed: () => Navigator.pop(dialogContext),
+        child: const Text('关闭'),
+      ),
+    ],
+  ),
+);
+
+double _dialogContentMaxHeight(BuildContext context) {
+  final media = MediaQuery.of(context);
+  final availableHeight = media.size.height - media.viewInsets.vertical;
+  return (availableHeight * .55).clamp(120.0, 480.0);
 }
 
 class _UserInputCard extends StatelessWidget {
@@ -997,34 +1059,49 @@ class _UserInputCard extends StatelessWidget {
 
   Future<void> _answer(BuildContext context) async {
     final draft = <String, String>{};
+    final formKey = GlobalKey<FormState>();
     final answers = await showDialog<Map<String, List<String>>>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
         title: const Text('回复 Codex'),
         content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: prompt.questions
-                  .map(
-                    (question) => Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: TextFormField(
-                        minLines: 1,
-                        maxLines: 4,
-                        onChanged: (value) => draft[question.id] = value,
-                        decoration: InputDecoration(
-                          labelText: question.prompt,
-                          helperText: question.options.isEmpty
-                              ? null
-                              : '可选：${question.options.join(' / ')}',
+          constraints: BoxConstraints(
+            maxWidth: 480,
+            maxHeight: _dialogContentMaxHeight(dialogContext),
+          ),
+          child: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              key: const ValueKey('user-input-form-scroll'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: prompt.questions
+                    .map(
+                      (question) => Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: TextFormField(
+                          key: ValueKey('user-input-${question.id}'),
+                          minLines: 1,
+                          maxLines: 4,
+                          onChanged: (value) => draft[question.id] = value,
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? '此项为必填'
+                              : null,
+                          decoration: InputDecoration(
+                            labelText: question.prompt,
+                            helperText: question.options.isEmpty
+                                ? null
+                                : '可选：${question.options.join(' / ')}',
+                            helperMaxLines: 3,
+                            errorMaxLines: 2,
+                          ),
                         ),
                       ),
-                    ),
-                  )
-                  .toList(growable: false),
+                    )
+                    .toList(growable: false),
+              ),
             ),
           ),
         ),
@@ -1034,15 +1111,15 @@ class _UserInputCard extends StatelessWidget {
             child: const Text('暂不回答'),
           ),
           FilledButton(
+            key: const ValueKey('submit-user-input'),
             onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
               final values = <String, List<String>>{};
               for (final question in prompt.questions) {
                 final value = draft[question.id]?.trim() ?? '';
-                if (value.isNotEmpty) values[question.id] = [value];
+                values[question.id] = [value];
               }
-              if (values.length == prompt.questions.length) {
-                Navigator.pop(dialogContext, values);
-              }
+              Navigator.pop(dialogContext, values);
             },
             child: const Text('提交'),
           ),

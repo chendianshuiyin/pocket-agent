@@ -522,7 +522,30 @@ class _PreviewCodexPort implements CodexPort, CodexNavigationPort {
           approval: const ApprovalPrompt(
             id: 'preview-approval',
             title: '允许执行命令？',
-            details: 'flutter test test/ui/terminal_pane_test.dart',
+            details: '''set -euo pipefail
+cd /srv/pocket-agent
+flutter pub get
+flutter analyze
+flutter test test/app/app_controller_test.dart
+flutter test test/ui/terminal_pane_test.dart
+flutter test test/widget_test.dart
+git status --short
+git diff --check
+dart format --output=none --set-exit-if-changed lib test
+echo "checking generated files"
+find lib -name '*.dart' -print
+echo "checking test fixtures"
+find test -name '*_test.dart' -print
+echo "checking package metadata"
+test -f pubspec.yaml
+test -f pubspec.lock
+echo "checking Android project"
+test -f android/app/build.gradle.kts
+echo "checking source tree"
+test -d lib/app
+test -d lib/ui
+echo "approval preview complete"
+echo END_MARKER''',
             raw: 'preview-only',
           ),
         ),
