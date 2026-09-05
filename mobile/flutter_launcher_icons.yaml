@@ -1,0 +1,9 @@
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/brand/agent-portrait-candidate.png
+  min_sdk_android: 24
+  adaptive_icon_background: "#1D2B3D"
+  adaptive_icon_foreground: assets/brand/agent-portrait-candidate.png
+  adaptive_icon_foreground_inset: 16
+  remove_alpha_ios: true

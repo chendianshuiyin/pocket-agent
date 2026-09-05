@@ -31,7 +31,8 @@ Flutter 自绘材质不等同于原生 Apple Liquid Glass。
 
 - `mobile/assets/brand/portrait-study.png`：用户认可的画风基准；身份辨识尚不足。
 - `mobile/assets/brand/agent-portrait-candidate.png`：保留角色与画风，加入轻量耳侧通信模块；
-  尚待用户确认 Agent 身份表达，尚未替换平台 launcher icon。
+  作为当前可更换的 launcher 候选接入 Android/iOS，仍待用户确认 Agent 身份表达，
+  不宣称已定稿。原始画面未重绘、未改动。
 
 图片通过内置 image_gen 生成/编辑，无 CLI/API fallback。原始输出保留于 Codex
 generated_images，项目副本已保存于仓库。被否定的旧草案不复制进项目。
@@ -50,6 +51,27 @@ Use case: precise-object-edit. Image 1 is the edit target: the user likes this p
 
 ## 交付门槛
 
-定稿后导出 Android/iOS 资产，检查 48px/64px、圆形/圆角蒙版、脸部安全区和背景不透明。
+通过 `mobile/flutter_launcher_icons.yaml` 和固定版本生成器导出 Android/iOS 资源，
+让候选可在真实 launcher 上评估。生成器只进行标准资源缩放和格式转换，不改变
+原始角色设计；源文件 SHA-256 为
+`33fe04a8538f297de60ced7e1e29900848f3247bbf5cb178c99aec2bbcf098d9`。
+
+```sh
+cd mobile
+flutter pub get
+dart run tool/generate_launcher_icons.dart
+dart run tool/verify_launcher_icons.dart
+```
+
+使用项目入口而不是直接运行生成器：`flutter_launcher_icons 0.14.4` 会误改
+Xcode 的 `ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS`。
+项目入口保护已有设置，校验工具也会拒绝该回归；不要为了生成图标破坏 iOS 项目。
+
+Android 使用全彩 legacy/adaptive icon，由系统应用外层 mask，不给源图预加圆角；
+iOS 导出不含 alpha 的全尺寸 AppIcon 资源。有关属性见
+[flutter_launcher_icons 作者文档](https://pub.dev/packages/flutter_launcher_icons)，
+Android 层尺寸与安全区见 [Android 官方规范](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive)。
+
+定稿前仍需检查 48px/64px、圆形/圆角蒙版、脸部安全区和背景不透明。
 不能以大图效果替代真实 launcher 验证。没有 Mac/Xcode/真机环境，本轮不得宣称通过
 iOS 构建、Icon Composer 分层效果或真机验证。
