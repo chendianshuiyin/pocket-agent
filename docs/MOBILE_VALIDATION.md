@@ -28,7 +28,7 @@
 | Android 真实 SSH 工作流 | `app_ssh_vps_test.dart` 使用真实 VPS 完整通过：命令、分段中文、创建 tmux、完整客户端重建、恢复同一终端内的环境变量、真实 Codex 初始化与未登录提示。输入通过 xterm 的 TextInputClient 测试通道驱动，不是物理键盘测试 |
 | Android 真实模型工作流 | 尚待有效登录；`app_vps_test.dart` 的 skipped integration 不算通过 |
 | 四屏视觉 | 首页与连接设置完成两轮 Android 独立评审；第二轮质量/原创/工艺/功能为 7/6/7/8。SSH 与 Codex 完成两轮独立评审，第二轮分别为 6/6/7/7 与 7/6/8/6；大字体、明暗主题、键盘、审批全文和必填反馈均实际检查，整体仍需迭代，不代表用户已确认最终视觉 |
-| App icon | 用户认可非 Q 版头像画风，Agent 身份表达仍在细化；尚未导出最终 launcher assets |
+| App icon | 带通信耳机的候选已接入 Android legacy/adaptive 与 iOS AppIcon；源图未改。主模型通过资源校验，并在 Android 实装确认圆形桌面图标和点击启动；仍是可替换候选，不代表用户已定稿或所有 OEM/iOS 外框已验证 |
 | 远端凭据清理 | 已停止授权与后续无认证测试 runtime；检查隔离目录、SSH 用户标准目录与 root 标准目录的 auth 文件不存在；删除临时本地 fixture 票据、撤销 adb reverse；本机 auth 未删除 |
 
 本记录区分单元测试、模拟服务、真实 SSH、真实模型与设备验证，任何一项不能替代另一项。
@@ -46,6 +46,35 @@
 target API 36，ARM64 versionCode 2001；x86_64 split 为 4001。切换 split/universal
 测试包时须注意版本号，不能因降级被拒就自动卸载用户数据。
 正式签名与 iOS 的逐项验证要求见 [平台交付基线](MOBILE_PLATFORMS.md)。
+
+### 新图标候选测试包
+
+源码基线 `3454cc2`。主模型执行
+`flutter build apk --release --split-per-abi --build-number=2`，三个 ABI 全部成功。
+新的 ARM64 副本为 `artifacts/Pocket-Agent-0.3.0-android-arm64-icon-candidate.apk`，
+21,323,275 bytes，SHA-256：
+`c28006ca2befdfee1d94a0c791c6f0a5775d16f29d5d4f67b08257e6df930b5b`。
+旧测试包未覆盖或删除。
+
+此包使用普通 `lib/main.dart`，ARM64 versionCode 2002，min API 24、target API 36，
+label 为 Pocket Agent，APK v2 signature 有效但仍由 Android Debug certificate
+签名，不是商店发布包。未在 ARM64 真机测试。
+
+主模型用 `adb install -r` 将 x86_64 split 升级到 versionCode 4002，未卸载或清除
+数据。实际桌面圆形图标已不再是 Flutter 占位，脸部可辨识；点击图标打开正常首页，
+“添加服务器”导航正常，再返回未配置服务器的首页。进程存活；日志仅见系统
+`ashmem` deprecated 提示，未见 Flutter exception 或崩溃。本轮不将桌面预测栏
+的系统外圈当作源图设计，也未验证其他 OEM 的所有 mask。
+
+截图与 AX 证据位于 ignored artifacts：`pocket-launcher-after.jpg`、
+`pocket-launcher-after.xml`、`pocket-icon-main.jpg`、`pocket-icon-launch.xml`、
+`pocket-icon-add-server.xml`、`pocket-icon-final.xml`。
+
+资源工具验证了 5 档 Android legacy 尺寸、5 档 108dp adaptive foreground、
+XML 资源引用，以及 25 个 iOS AppIcon 引用的尺寸与 RGB/无透明通道要求。
+主模型复跑安全生成入口、自检和资源校验通过，Xcode project 没有内容改动；
+生成器依赖只用于开发，不进入业务代码。完整本地套件仍为 108 通过 / 6 live 跳过，
+最终 `flutter analyze` 无问题。iOS 仅完成静态资源检查，仍未构建、未真机验证。
 
 ### 隔离的界面预览
 
