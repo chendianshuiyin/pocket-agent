@@ -260,7 +260,7 @@ class _TerminalTabsState extends State<_TerminalTabs> {
       }
       final position = _scrollController.position;
       final leading = PocketSpacing.xs + selected * (_tabWidth + _tabSpacing);
-      final trailing = leading + _tabWidth;
+      final trailing = leading + _tabWidth + _tabSpacing;
       var target = position.pixels;
       if (leading < position.pixels) {
         target = leading;

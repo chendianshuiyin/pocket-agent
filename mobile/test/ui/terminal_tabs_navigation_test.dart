@@ -169,6 +169,14 @@ void _expectFullyVisible(WidgetTester tester, String id) {
   final tab = tester.getRect(find.byKey(ValueKey('terminal-tab-slot-$id')));
   expect(tab.left, greaterThanOrEqualTo(viewport.left - 0.5));
   expect(tab.right, lessThanOrEqualTo(viewport.right + 0.5));
+  final delete = find.descendant(
+    of: find.byKey(ValueKey('terminal-tab-$id')),
+    matching: find.byTooltip('Delete'),
+  );
+  expect(delete, findsOneWidget);
+  final deleteTarget = tester.getRect(delete);
+  expect(deleteTarget.left, greaterThanOrEqualTo(viewport.left - 0.5));
+  expect(deleteTarget.right, lessThanOrEqualTo(viewport.right + 0.5));
 }
 
 Future<ServerWorkspace> _workspaceWithTabs(
