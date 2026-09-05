@@ -11,7 +11,7 @@
 
 ## 应用界面
 
-当前可评估实现采用 Ink Navy / Periwinkle / Warm Ivory，尚待 Android 视觉验证，
+当前可评估实现采用 Ink Navy / Periwinkle / Warm Ivory，已完成分阶段 Android 视觉检查，
 不是用户已确认的最终配色。系统字体、明确标题与 metadata 层级、实底内容卡片、
 深色终端；共享主题集中管理颜色、间距与圆角。
 
@@ -20,7 +20,9 @@ Flutter 自绘材质不等同于原生 Apple Liquid Glass。
 参考：[Apple — Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)。
 
 必须验证 light/dark、大字体、窄屏、键盘展开、48dp 触控及对比度。
-保留现有路由、功能和测试入口。评估通过前不宣称视觉升级已完成。
+保留现有路由、功能和测试入口。功能回归已修复触控热区、审批全文与中断状态，
+整体风格仍需迭代，且尚未得到用户定稿确认；不宣称视觉升级已完成。
+详细范围与证据见 [移动端验证记录](MOBILE_VALIDATION.md)。
 
 ## App icon：原创角色头像
 
