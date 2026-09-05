@@ -14,7 +14,7 @@
 
 | 验证项 | 结果与边界 |
 | --- | --- |
-| 静态检查与本地测试 | 主模型复跑 `flutter analyze` 无问题；`flutter test test tool/workspace_preview_test.dart`：100 通过（含 2 个隔离预览测试）、4 个显式 live 测试跳过，跳过不计成功 |
+| 静态检查与本地测试 | 主模型复跑 `flutter analyze` 无问题；`flutter test test tool/workspace_preview_test.dart`：103 通过（含 2 个隔离预览测试）、5 个显式 live 测试跳过，跳过不计成功 |
 | 多服务器隔离 | 新增并由主模型复跑 7 项回归测试：同时连接、切换视图、同名 tmux、后台事件、编辑、删除与全局关闭；fake transport 验证客户端隔离，不冒充多台真实 VPS 并发测试 |
 | 验证脚本异常清理 | 主模型复跑 16 个 Python 测试通过，包含认证文件部分写入失败、chmod 失败、runtime 启动后失败、本地 fixture 清理与 tmux 窗格归属校验 |
 | SSH 真实连接 | 已验证主机 pin 拒绝错误指纹、PTY 输入/输出/resize、tmux 断开重接 |
@@ -106,6 +106,7 @@ flutter build apk --debug
 ```sh
 flutter test test/live_vps_test.dart --dart-define-from-file=../artifacts/validation-defines.json
 flutter test test/live_codex_recovery_test.dart --dart-define-from-file=../artifacts/validation-defines.json
+flutter test test/live_codex_approval_test.dart --dart-define-from-file=../artifacts/validation-defines.json
 flutter test integration_test/app_vps_test.dart -d emulator-5554 --dart-define-from-file=../artifacts/validation-defines.json
 ```
 
@@ -119,6 +120,18 @@ flutter test integration_test/app_ssh_vps_test.dart -d emulator-5554 --dart-defi
 
 后者覆盖原生 SSH 输入、分段 UTF-8、完整客户端重建后的同一 tmux 会话恢复和
 Codex 未登录提示，不替代 `app_vps_test.dart` 的真实模型执行验证。
+
+`live_codex_approval_test.dart` 的远端用例必须真实收到 command approval，才可批准
+一个完整 allowlist 内的无副作用 `printf` 命令；它检查对应请求 resolved、对应命令
+item 的退出码与精确输出，以及 turn 完成。额外命令或权限请求会取消并失败。
+模型没有发出审批请求、协议 command 渲染不在有限 allowlist 内，均不能算通过。
+测试中的本地 guard/mock 验证与被跳过的远端用例分别记录，不以模型文字回复
+或本地 mock 成功代替真实审批链路。
+
+该文件的 2 个 allowlist 测试与 1 个本地 WebSocket mock 测试已由主模型复跑通过；
+mock 覆盖非法命令实际发出 cancel response，以及合法审批后的 resolved、item 和
+turn 通知。新增内容仅为测试与记录，未改变普通 App 或重新生成 APK；上方测试包
+仍对应 `df691d6`。尚未进行新的浏览器登录，本轮没有上传或尝试复用失效认证缓存。
 
 测试结束必须调用 fixture 的 `/finish` 并检查退出结果；异常终止后按
 [运维说明](MOBILE_OPERATIONS.md) 执行匹配模式的 `--cleanup-only`。
