@@ -14,13 +14,14 @@
 
 | 验证项 | 结果与边界 |
 | --- | --- |
-| 静态检查与本地测试 | 主模型复跑 `flutter analyze` 无问题；`flutter test test tool/workspace_preview_test.dart`：103 通过（含 2 个隔离预览测试）、5 个显式 live 测试跳过，跳过不计成功 |
+| 静态检查与本地测试 | 主模型复跑 `flutter analyze` 无问题；`flutter test test tool/workspace_preview_test.dart tool/remote_login_test.dart`：108 通过（含隔离预览和设备登录安全测试）、6 个显式 live 测试跳过，跳过不计成功 |
 | 多服务器隔离 | 新增并由主模型复跑 7 项回归测试：同时连接、切换视图、同名 tmux、后台事件、编辑、删除与全局关闭；fake transport 验证客户端隔离，不冒充多台真实 VPS 并发测试 |
 | 验证脚本异常清理 | 主模型复跑 16 个 Python 测试通过，包含认证文件部分写入失败、chmod 失败、runtime 启动后失败、本地 fixture 清理与 tmux 窗格归属校验 |
 | SSH 真实连接 | 已验证主机 pin 拒绝错误指纹、PTY 输入/输出/resize、tmux 断开重接 |
 | 真实 app-server 传输 | 已验证 SSH forward、回环 tunnel `/readyz` 200、WebSocket initialize 和 model/thread RPC |
 | 无登录真实链路 | 独立 `live_ssh_vps_test.dart` 已通过：真实 readyz 与 `readAccount=signedOut`；未上传凭据、未发送模型请求 |
 | 真实模型回复 | 尚未通过：服务返回 refresh token revoked；不是模型成功回复 |
+| 官方设备登录 | 真实 app-server 已成功返回设备登录请求；浏览器到达官方账号选择页，但控制连接失败，登录等待超时。随后真实 `account/logout` 与 `account/read` 验证 `authenticated=false`；不能算登录或模型验证成功 |
 | 执行中断线恢复、真实 interrupt | 测试代码已编写，尚待有效登录完成实测 |
 | 审批/用户输入 | 模拟协议与真实生产 Port 测试验证：任务结束/中断/断线使旧请求失效，重连复用 request id 不能让旧对象批准新请求，resolved 通知清理当前提示；widget 测试验证全文和表单。尚未通过真实远端模型完整流程 |
 | Android 构建安装 | debug 与 `flutter build apk --release --split-per-abi` 均成功；x86_64 release-mode APK 安装后前台进程、首页和添加服务器导航正常，未见应用错误日志；ARM64 APK 的 manifest、ABI、APK v2 signature 已核查，但尚未在 ARM64 真机运行 |
@@ -85,10 +86,12 @@ SSH/Codex 第三轮仅做定向功能复核：默认和 1.6× 字体的 active t
 
 ### 真实模型验证的剩余条件
 
-此前真实 turn 返回 `authentication_refresh_revoked`。继续验证前需要用户完成新的
-Codex 登录；重复复制原失效缓存不能视作解决。可在本机运行 `codex login`，或在
-远端采用用户亲自完成的 `codex login --device-auth`。仅在已获授权的临时测试中
-通过 SSH 传输缓存，测试结束再次退出并验证清理；不要在聊天或仓库中提供认证文件。
+此前真实 turn 返回 `authentication_refresh_revoked`。继续验证前需要完成新的
+Codex 登录；重复复制原失效缓存不能视作解决。用户已授权主模型代办官方登录，
+认证操作不委派给编码子代理。本轮改用远端 app-server 的设备登录 API，不读取
+或上传本机失效缓存；目前受浏览器控制连接失败阻断，不能宣称登录完成。
+仅在已获授权的临时测试中使用认证，测试结束再次退出并验证清理；不要在聊天
+或仓库中提供认证文件。
 参见 [OpenAI 官方身份验证文档](https://learn.chatgpt.com/docs/auth)。
 
 ## 可复现命令
@@ -131,7 +134,36 @@ item 的退出码与精确输出，以及 turn 完成。额外命令或权限请
 该文件的 2 个 allowlist 测试与 1 个本地 WebSocket mock 测试已由主模型复跑通过；
 mock 覆盖非法命令实际发出 cancel response，以及合法审批后的 resolved、item 和
 turn 通知。新增内容仅为测试与记录，未改变普通 App 或重新生成 APK；上方测试包
-仍对应 `df691d6`。尚未进行新的浏览器登录，本轮没有上传或尝试复用失效认证缓存。
+仍对应 `df691d6`。后续设备登录尝试未成功，本轮没有上传或尝试复用失效认证缓存。
+
+### 主模型代办设备登录
+
+`mobile/tool/remote_login_test.dart` 通过私有 fixture 和 SSH tunnel 使用现有
+app-server，支持 `login`、`status`、`logout` 三个显式动作。默认无 fixture 时
+只运行本地安全测试；有 fixture 时默认仅查询认证状态，不启动远端 runtime。
+正常 App 不引用该文件。发起登录必须显式指定交互式动作，CI 环境拒绝运行，
+已认证的远端也拒绝重新登录以避免替换现有账户。
+
+```sh
+flutter test tool/remote_login_test.dart --dart-define-from-file=../artifacts/validation-defines.json --dart-define=POCKET_LOGIN_ACTION=status
+flutter test tool/remote_login_test.dart --dart-define-from-file=../artifacts/validation-defines.json --dart-define=POCKET_LOGIN_ACTION=login --dart-define=POCKET_DEVICE_LOGIN_INTERACTIVE=true
+flutter test tool/remote_login_test.dart --dart-define-from-file=../artifacts/validation-defines.json --dart-define=POCKET_LOGIN_ACTION=logout
+```
+
+此工具调用 `account/login/start` 的 `chatgptDeviceCode` 流程，只显示官方
+verification URL 与短期 user code，不输出 login id 或账户详情。交互输出仍有
+敏感性，不得使用 CI、日志归档或重定向持久保存，不得写入提交或长期验证报告。
+登录等待超时会尝试取消对应请求，成功后还须读取已认证状态，不能
+把请求创建当作成功。后续通过真实模型测试后先执行 `logout`，再结束 fixture。
+
+本轮使用未上传本机凭据的隔离 fixture 发起登录，等待超时；真实注销用例
+（含 2 项本地解析测试）3 项通过，返回 `authenticated=false`。随后 `/finish`
+成功退出，另按用户授权核查并清理隔离、SSH 用户及 root 标准认证路径。
+工具加固后再次启动无认证 fixture，主模型分别复跑默认状态查询与显式注销，
+每次均为 5 项本地安全测试加 1 项真实 RPC 用例通过，均返回未登录；随后再次
+完成 `/finish` 清理。加固后的完整设备登录仍未验证，不能由状态查询推断成功。
+确认测试 runtime 已停止、临时 fixture 文件及监听端口已移除、无 adb reverse。
+这些证据仅证明注销与清理，不替代尚未通过的登录、模型执行、恢复和审批验收。
 
 测试结束必须调用 fixture 的 `/finish` 并检查退出结果；异常终止后按
 [运维说明](MOBILE_OPERATIONS.md) 执行匹配模式的 `--cleanup-only`。

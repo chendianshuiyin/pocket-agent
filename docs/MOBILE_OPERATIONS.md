@@ -80,6 +80,12 @@ credential storage、确认其中不存在 `auth.json`，并从 runtime 环境�
 `OPENAI_API_KEY` 与 `CODEX_ACCESS_TOKEN`。它也不会退出或删除远端用户及 root 的
 标准 Codex 登录。默认模式仍只用于用户显式授权复制本机 Codex 登录的验证。
 
+需要新的认证而不复制本机缓存时，可在上述隔离 fixture 上显式运行
+`mobile/tool/remote_login_test.dart` 的设备登录动作，见
+[验证记录](MOBILE_VALIDATION.md#主模型代办设备登录)。这会在远端隔离目录生成新登录，
+此后不能继续把该 runtime 当作未登录环境。完成测试后先使用工具的显式 `logout`
+并确认未登录，再结束 fixture；不要只删除文件而遗留已登录的运行进程。
+
 测试完成后使用其 `/finish` 控制入口，或者在异常终止后显式运行
 `--cleanup-only`。辅助程序停止属于本次验证的 runtime、删除临时终端，并退出及
 删除测试目录、当前 SSH 用户标准目录和 root 标准目录中的 Codex 登录。
