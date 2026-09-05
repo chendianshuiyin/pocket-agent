@@ -92,59 +92,73 @@ void main() {
         );
 
         await tapWhenHitTestable(tester, find.text('Codex'));
+        final newThreadButton = find.byKey(const ValueKey('new-codex-thread'));
         await pumpUntil(
           tester,
-          () => find
-              .byKey(const ValueKey('new-codex-thread'))
-              .evaluate()
-              .isNotEmpty,
+          () =>
+              newThreadButton.hitTestable().evaluate().isNotEmpty &&
+              tester.widget<FilledButton>(newThreadButton).onPressed != null,
           timeout: const Duration(minutes: 2),
         );
-        await tapWhenHitTestable(
+        await tapWhenHitTestable(tester, newThreadButton);
+        final cwdField = find.byKey(const ValueKey('new-thread-cwd'));
+        await pumpUntil(
           tester,
-          find.byKey(const ValueKey('new-codex-thread')),
+          () =>
+              cwdField.hitTestable().evaluate().isNotEmpty &&
+              tester.widget<TextField>(cwdField).enabled != false,
         );
-        await tester.pumpAndSettle();
-        await tester.enterText(
-          find.byKey(const ValueKey('new-thread-cwd')),
-          fixtureString(fixture, 'cwd'),
-        );
+        await tester.enterText(cwdField, fixtureString(fixture, 'cwd'));
         await tapWhenHitTestable(
           tester,
           find.byKey(const ValueKey('confirm-new-thread')),
         );
+        final composer = find.byKey(const ValueKey('codex-composer'));
         await pumpUntil(
           tester,
-          () => find
-              .byKey(const ValueKey('codex-composer'))
-              .evaluate()
-              .isNotEmpty,
+          () =>
+              composer.hitTestable().evaluate().isNotEmpty &&
+              tester.widget<TextField>(composer).enabled != false,
         );
 
         final modelPicker = find.byKey(const ValueKey('codex-model-picker'));
-        if (modelPicker.evaluate().isNotEmpty) {
-          await tapWhenHitTestable(tester, modelPicker);
-          await tester.pumpAndSettle();
-          final preferredModel = find.byKey(
-            const ValueKey('codex-model-gpt-5.6-sol'),
-          );
-          if (preferredModel.evaluate().isNotEmpty) {
-            await tapWhenHitTestable(tester, preferredModel.last);
-          } else {
-            await tester.tapAt(const Offset(4, 4));
-          }
-          await tester.pumpAndSettle();
-        }
-
-        const codexMarker = 'UI_CODEX_OK';
-        await tester.enterText(
-          find.byKey(const ValueKey('codex-composer')),
-          'Reply exactly $codexMarker. No tools.',
-        );
-        await tapWhenHitTestable(tester, find.byTooltip('发送'));
         await pumpUntil(
           tester,
-          () => find.text('已完成').evaluate().isNotEmpty,
+          () =>
+              modelPicker.hitTestable().evaluate().isNotEmpty &&
+              tester.widget<PopupMenuButton<String>>(modelPicker).enabled,
+        );
+        await tapWhenHitTestable(tester, modelPicker);
+        final preferredModel = find.byKey(
+          const ValueKey('codex-model-gpt-5.6-sol'),
+        );
+        final modelOptions = find.byWidgetPredicate(
+          (widget) => widget is PopupMenuItem<String>,
+          description: 'Codex model options',
+        );
+        await pumpUntil(tester, () => modelOptions.evaluate().isNotEmpty);
+        if (preferredModel.evaluate().isNotEmpty) {
+          await tapWhenHitTestable(tester, preferredModel.last);
+        } else {
+          await tester.tapAt(const Offset(4, 4));
+        }
+        await pumpUntil(tester, () => modelOptions.evaluate().isEmpty);
+
+        final codexMarker =
+            'UI_CODEX_OK_${DateTime.now().microsecondsSinceEpoch}';
+        await tester.enterText(
+          composer,
+          'Reply exactly $codexMarker. No tools.',
+        );
+        final sendButton = _enabledIconButton('发送');
+        await pumpUntil(
+          tester,
+          () => sendButton.hitTestable().evaluate().isNotEmpty,
+        );
+        await tapWhenHitTestable(tester, sendButton);
+        await pumpUntil(
+          tester,
+          () => _completedRunStatus().evaluate().isNotEmpty,
           timeout: const Duration(minutes: 3),
         );
         await pumpUntil(
@@ -153,11 +167,12 @@ void main() {
         );
 
         await tapWhenHitTestable(tester, find.byTooltip('返回任务列表'));
+        final refreshButton = _enabledIconButton('刷新任务');
         await pumpUntil(
           tester,
-          () => find.byTooltip('刷新任务').evaluate().isNotEmpty,
+          () => refreshButton.hitTestable().evaluate().isNotEmpty,
         );
-        await tapWhenHitTestable(tester, find.byTooltip('刷新任务'));
+        await tapWhenHitTestable(tester, refreshButton);
         await pumpUntil(
           tester,
           () => find
@@ -251,6 +266,22 @@ Finder _threadTiles() => find.byWidgetPredicate(
       widget.key is ValueKey<String> &&
       (widget.key! as ValueKey<String>).value.startsWith('codex-thread-'),
   description: 'Codex thread tiles',
+);
+
+Finder _enabledIconButton(String tooltip) => find.byWidgetPredicate(
+  (widget) =>
+      widget is IconButton &&
+      widget.tooltip == tooltip &&
+      widget.onPressed != null,
+  description: 'enabled $tooltip button',
+);
+
+Finder _completedRunStatus() => find.byWidgetPredicate(
+  (widget) =>
+      widget is Text &&
+      widget.key == const ValueKey('codex-run-status') &&
+      (widget.data == '已完成' || widget.data?.startsWith('已完成 · ') == true),
+  description: 'completed Codex run status',
 );
 
 Finder _assistantMarker(String marker) => find.descendant(

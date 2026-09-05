@@ -9,6 +9,29 @@ import 'package:pocket_agent/ui/codex_pane.dart';
 import 'package:pocket_agent/ui/theme/pocket_theme.dart';
 
 void main() {
+  testWidgets('run status key is not confused by matching timeline text', (
+    tester,
+  ) async {
+    await _pumpCodexPane(
+      tester,
+      runState: ThreadRunState.completed,
+      activeModel: 'gpt-test',
+      timeline: const <TimelineItem>[
+        TimelineItem(
+          id: 'user-completed-text',
+          kind: TimelineKind.user,
+          text: '正文提到已完成',
+        ),
+      ],
+    );
+
+    expect(find.text('正文提到已完成'), findsOneWidget);
+    final status = tester.widget<Text>(
+      find.byKey(const ValueKey('codex-run-status')),
+    );
+    expect(status.data, '已完成 · gpt-test');
+  });
+
   testWidgets('a draft from thread A is not sent after switching to thread B', (
     tester,
   ) async {
@@ -206,8 +229,14 @@ void main() {
 Future<_Fixture> _pumpCodexPane(
   WidgetTester tester, {
   ThreadRunState runState = ThreadRunState.idle,
+  String? activeModel,
+  List<TimelineItem> timeline = const <TimelineItem>[],
 }) async {
-  final port = _FakeCodexPort(runState);
+  final port = _FakeCodexPort(
+    runState: runState,
+    activeModel: activeModel,
+    timeline: timeline,
+  );
   final services = _FakeAppServices(port);
   final workspace = await _openWorkspace(port, services: services);
   final activeWorkspace = ValueNotifier(workspace);
@@ -295,12 +324,16 @@ const _skill = SkillChoice(name: 'A-only-skill', path: '/skills/a/SKILL.md');
 CodexWorkspaceSnapshot _snapshot(
   String threadId, {
   ThreadRunState runState = ThreadRunState.idle,
+  String? activeModel,
+  List<TimelineItem> timeline = const <TimelineItem>[],
 }) => CodexWorkspaceSnapshot(
   connected: true,
   activeThreadId: threadId,
   threads: _threads,
   skills: const [_skill],
   runState: runState,
+  activeModel: activeModel,
+  timeline: timeline,
   accountState: RemoteAccountState.authenticated,
 );
 
@@ -404,8 +437,16 @@ class _FakeConnectedServer implements ConnectedServer {
 }
 
 class _FakeCodexPort implements CodexPort {
-  _FakeCodexPort([ThreadRunState runState = ThreadRunState.idle])
-    : _current = _snapshot('thread-a', runState: runState);
+  _FakeCodexPort({
+    ThreadRunState runState = ThreadRunState.idle,
+    String? activeModel,
+    List<TimelineItem> timeline = const <TimelineItem>[],
+  }) : _current = _snapshot(
+         'thread-a',
+         runState: runState,
+         activeModel: activeModel,
+         timeline: timeline,
+       );
 
   final _snapshots = StreamController<CodexWorkspaceSnapshot>.broadcast();
   CodexWorkspaceSnapshot _current;

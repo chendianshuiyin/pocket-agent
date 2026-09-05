@@ -707,6 +707,7 @@ class _Conversation extends StatelessWidget {
                 const SizedBox(width: PocketSpacing.xs),
                 Expanded(
                   child: Text(
+                    key: const ValueKey('codex-run-status'),
                     '${_stateLabel(snapshot.runState)}${snapshot.activeModel == null ? '' : ' · ${snapshot.activeModel}'}',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
