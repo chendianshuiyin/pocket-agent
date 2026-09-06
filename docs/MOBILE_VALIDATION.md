@@ -129,9 +129,16 @@ flutter test tool/remote_login_test.dart --dart-define-from-file=../artifacts/va
 本次仓库整理已删除一次性诊断脚本和被否定的耳机旧稿，保留正式代码、回归测试、
 可复用工具、当前图标和画风参考；历史代码与旧稿仍可从 Git 恢复。
 
-本地构建缓存及旧 APK、截图、协议导出、验证虚拟环境的删除被执行环境安全策略拦截，
-尚未实际移除。后续清理范围为 `target/`、`mobile/build/`、`mobile/.dart_tool/`、
-`mobile/android/.gradle/`、`mobile/android/.kotlin/`、`mobile/ios/Flutter/ephemeral/`、
-`frontend/dist/`、`scripts/__pycache__/` 和 `artifacts/` 中的旧测试产物。
-必须保留上方列出的最新 v5 APK，不删除 `.env`、正常开发依赖或用户配置；缓存可在后续
-构建时重建，旧的未跟踪测试包和截图若永久删除则不能直接从 Git 恢复。
+2026-09-06 切换为可请求审批的会话模式后，经正式命令审批完成本地清理：
+`target/`、`mobile/build/`、`mobile/.dart_tool/`、`mobile/android/.gradle/`、
+`mobile/android/.kotlin/`、`mobile/ios/Flutter/ephemeral/`、`frontend/dist/`、
+`scripts/__pycache__/`、`mobile/.flutter-plugins-dependencies`，以及 `artifacts/`
+中的 50 项旧 APK、截图、UI dump、协议导出和验证/设计评审临时产物。
+删除前已确认所有目标都在工作区内、不受 Git 跟踪，且路径及内容不含 reparse point；
+文件大小合计 8,084,555,592 bytes（约 7.53 GiB），删除后逐项确认目标不存在。
+
+`artifacts/` 仅保留上方列出的最新 v5 APK，删除后 SHA-256 再次匹配。
+没有删除 `.env`、正常开发依赖、用户配置、正式图标或回归测试。
+本轮只清理缓存和旧产物，未重新构建或重跑 Flutter 测试，避免立即重建已清理缓存；
+前述测试结果仍对应代码整理后的验证，不冒充本次新测试。
+缓存可在后续构建时重建；已永久删除的未跟踪旧测试包和截图不能直接从 Git 恢复。
